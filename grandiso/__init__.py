@@ -83,6 +83,7 @@ class GrandIsoQueue:
 
 
 _DEFAULT_SQS_RESOURCE_URL = "http://localhost:4566"
+_DEFAULT_LAMBDA_RESOURCE_URL = "http://localhost:4566"
 
 
 class SimplePythonQueueGrandIsoQueue(GrandIsoQueue):
