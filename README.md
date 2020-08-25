@@ -38,3 +38,13 @@ _Grand-Iso_ is a subgraph isomorphism algorithm that leverages serverless techno
     - Delete the backbone queue
     - Delete the results table (after collection)
 ```
+
+# Beginning
+
+```shell
+AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' TMPDIR=/private$TMPDIR DEBUG=1 SERVICES=serverless,cloudformation,sqs,events docker-compose up
+```
+
+```shell
+AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' zappa deploy
+```
