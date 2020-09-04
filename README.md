@@ -45,9 +45,13 @@ _Grand-Iso_ is a subgraph isomorphism algorithm that leverages serverless techno
 AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' TMPDIR=/private$TMPDIR DEBUG=1 SERVICES=serverless,cloudformation,sqs,events PORT_WEB_UI=8082 docker-compose up
 ```
 
+````shell
+pip install --target lambda/vendor networkx
+pip install --target lambda/vendor git+https://github.com/aplbrain/grand
+
 ```shell
 AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' python provision.py provision
-```
+````
 
 ```shell
 AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' python provision.py reset

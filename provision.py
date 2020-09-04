@@ -1,10 +1,14 @@
 import sys
 import json
-import boto3
+import glob
+import os
 import io
 import zipfile
 from zipfile import ZipFile, ZipInfo
 import time
+
+import boto3
+import tqdm
 
 DEBUG = True
 
@@ -29,128 +33,8 @@ ASSUME_POLICY = """{
     }
   ]
 }"""
-ATTACH_POLICY = """{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "logs:*"
-            ],
-            "Resource": "arn:aws:logs:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "lambda:InvokeFunction"
-            ],
-            "Resource": [
-                "*"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "xray:PutTraceSegments",
-                "xray:PutTelemetryRecords"
-            ],
-            "Resource": [
-                "*"
-            ]
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ec2:AttachNetworkInterface",
-                "ec2:CreateNetworkInterface",
-                "ec2:DeleteNetworkInterface",
-                "ec2:DescribeInstances",
-                "ec2:DescribeNetworkInterfaces",
-                "ec2:DetachNetworkInterface",
-                "ec2:ModifyNetworkInterfaceAttribute",
-                "ec2:ResetNetworkInterfaceAttribute"
-            ],
-            "Resource": "*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "s3:*"
-            ],
-            "Resource": "arn:aws:s3:::*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "kinesis:*"
-            ],
-            "Resource": "arn:aws:kinesis:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "sns:*"
-            ],
-            "Resource": "arn:aws:sns:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "sqs:*"
-            ],
-            "Resource": "arn:aws:sqs:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "dynamodb:*"
-            ],
-            "Resource": "arn:aws:dynamodb:*:*:*"
-        },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "route53:*"
-            ],
-            "Resource": "*"
-        }
-    ]
-}"""
 
 FUNCTION_HANDLER = """
-import json
-import os
-
-import boto3
-
-def main(event, lambda_context):
-
-    sqs_client = boto3.client(
-        "sqs",
-        use_ssl=False,
-        endpoint_url="http://" + os.getenv("LOCALSTACK_HOSTNAME") + ":4566",
-        aws_access_key_id="foo",
-        aws_secret_access_key="foo",
-        region_name='us-east-1'
-    )
-
-    print("!!!")
-
-    candidate = json.loads(event['Records'][0]['body'])
-    if candidate['foo'] == 'bar':
-        print("!!! foo is bar")
-        # queue_url = sqs_client.get_queue_url(QueueName="GrandIsoQ")["QueueUrl"]
-        queue_url = "http://" + os.getenv("LOCALSTACK_HOSTNAME") + ":4566/000000000000/GrandIsoQ"
-        print("!!! got URL")
-        sqs_client.send_message(QueueUrl=queue_url, MessageBody='{"foo": "baz"}')
-        print("!!! sent message")
-        result = json.dumps({"status": "queueing..."})
-        print(result)
-        return result
-
-    result = json.dumps({"candidate": candidate})
-    print(result)
-    return result
 
 """
 
@@ -255,15 +139,27 @@ class GrandIso:
         return queue_arn
 
     def generate_zip(self):
+        def zipdir(dpath, zipf):
+            _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
+            for fp in _debug_wrap(
+                glob.glob(os.path.join(dpath, "**/*"), recursive=True)
+            ):
+                base = os.path.commonpath([dpath, fp])
+                zipf.write(fp, arcname=fp.replace(base + "/", ""))
+
         mem_zip = io.BytesIO()
 
-        files = [("grandiso.py", FUNCTION_HANDLER)]
+        vendor_dirs = ["lambda/vendor"]
+        files = ["lambda/main.py"]
 
         with PermissiveZipFile(
             mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED
         ) as zf:
-            for name, bytes in files:
-                zf.writestr(name, bytes)
+            for directory in vendor_dirs:
+                zipdir(directory, zf)
+
+            for file in files:
+                zf.write(file, arcname=file.replace("lambda/", ""))
 
         return mem_zip.getvalue()
 
@@ -290,7 +186,7 @@ class GrandIso:
                 FunctionName=function_name,
                 Runtime="python3.8",
                 Role=role_arn,
-                Handler="grandiso.main",
+                Handler="main.main",
                 Code={"ZipFile": self.generate_zip()},
             )
             print(lambda_function)
