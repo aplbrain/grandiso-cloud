@@ -3,7 +3,6 @@ import os
 
 import boto3
 
-from grand import Graph
 from grand.backends import DynamoDBBackend
 
 # LOCALSTACK_HOSTNAME = os.getenv("LOCALSTACK_HOSTNAME")
@@ -11,15 +10,12 @@ LOCALSTACK_HOSTNAME = "172.17.0.1"
 
 ENDPOINT_URL = "http://" + LOCALSTACK_HOSTNAME + ":4566"
 
-# import networkx as nx
-
 
 def main(event, lambda_context):
 
-    G = Graph(backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL))
-    G.nx.add_edge("1", "2")
+    DG = DynamoDBBackend(dynamodb_url=ENDPOINT_URL)
 
-    print(len(G.nx.nodes()))
+    print(DG.get_node_count())
 
     # sqs_client = boto3.client(
     #     "sqs",
