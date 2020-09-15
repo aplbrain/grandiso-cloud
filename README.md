@@ -8,57 +8,102 @@ _Grand-Iso_ is a subgraph isomorphism algorithm that leverages serverless techno
 
 > <small>\* You may discover that "infinite" here is predominantly bounded by your wallet, which is no joke.</small>
 
-## Pseudocode for novel "Grand-Iso" algorithm
+For an overview of the algorithm at work here, see [docs/algorithm.md](docs/algorithm.md).
 
-```
-- Provision a DynamoDB table for result storage.
-- Preprocessing
-    - Identify highest-degree node in motif, M1
-    - Identify second-highest degree node in motif, M2, connected to M1 by
-        a single edge.
-    - Identify all nodes with degree of M1 or greater in the host graph,
-        which also have all required attributes of the M1 and M2 nodes. If
-        neither M1 nor M2 have degree > 1 nor attributes, select M1 and M2 as
-        two nodes with attributes defined.
-    - Enumerate all paths in the host graph from M1 candidates to M2 candidates,
-        as candidate "backbones" in AWS SQS.
-- Motif Search
-    - For each backbone candidate:
-        - Schedule an AWS Lambda:
-            - Pop the backbone from the queue.
-            - Traverse all shortest paths in the motif starting at the nearest
-                of either M1 or M2
-            - If multiple nodes are valid candidates, queue a new backbone with
-                each option, and terminate the current Lambda.
-            - When all paths are valid paths in the host graph, add the list
-                of participant nodes to a result in the DynamoDB table.
-- Reporting
-    - Return a serialization of the results from the DynamoDB table.
-- Cleanup
-    - Delete the backbone queue
-    - Delete the results table (after collection)
-```
+# Preparation
 
-# Beginning
+## Prerequisites
+
+You should confirm that you have set `AWS_DEFAULT_REGION` somewhere. `us-east-1` is recommended. You will also need an IAM user (or user account) with access to the following services:
+
+-   DynamoDB
+-   IAM
+-   Lambda
+-   SQS
+
+I recommend saving this configuration in `~/.aws/credentials` and then referencing with the `AWS_PROFILE` environment variables, though you can pass credentials directly (or as environment variables) as well.
+
+## Installing Dependencies
+
+In order to use tis package, you will need the packages listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
 
 ```shell
-AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' AWS_ACCESS_KEY_ID='foobar' AWS_SECRET_ACCESS_KEY='foobar' TMPDIR=/private$TMPDIR DEBUG=1 SERVICES=serverless,cloudformation,sqs,events PORT_WEB_UI=8082 docker-compose up
+pip install -r requirements.txt
 ```
 
-```shell
-pip install --target lambda/vendor networkx
-pip install --target lambda/vendor git+https://github.com/aplbrain/grand
-```
+You will also need to install dependencies for the lambda runtime. The script `lambda/downloadvendor.sh` will handle this for you automatically. Note that if you change which versions of libraries you are using, you will need to make sure that any installed libraries with compiled binaries (e.g. numpy, pandas) are compatible with a 64-bit linux system. (If you are using the `downloadvendor.sh` script, you can ignore this warning; the versions are correct already.)
+
+To install vendored libraries, run the following (you must run the script from inside the `lambda` directory):
 
 ```shell
-AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' python provision.py provision
-AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' python provision.py create_host
+cd lambda
+bash ./downloadvendor.sh
+cd ..
 ```
 
-```shell
-AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' python provision.py kickoff
+Your repository should now look like:
+
+```
++ (this repository)/
+|
++-+ lambda/
+| |
+| +-+ downloadvendor.sh
+| |
+| +-+ main.py
+| |
+| +-+ vendor/
+|   |
+|   +-+ ...
+|   +-+ (python packages)
+|   +-+ ...
+|
++ (this readme)
 ```
 
+# Optional: Localstack configuration
+
+For testing and development purposes, you can use `localstack` to act as a mock for the AWS cloud environment. Note that performance is dramatically slower and there is a severe overhead penalty, so you shold avoid using localstack for production or larger workloads.
+
+To run localstack, we recommend downloading the latest version from GitHub, and running with `docker-compose`:
+
 ```shell
-AWS_DEFAULT_REGION=us-east-1 AWS_PROFILE='localstack' python provision.py aggregate_results
+git clone https://github.com/localstack/localstack
+cd localstack
+AWS_PROFILE='localstack' TMPDIR=/private$TMPDIR DEBUG=1 SERVICES=serverless,cloudformation,sqs,events PORT_WEB_UI=8082 docker-compose up
+```
+
+If you are using localstack, you should specify all endpoint URLs in the steps below, with the `--endpoint-url` command line argument.
+
+# Usage
+
+You are now ready to begin using this package. Start by provisioning your resources:
+
+## Provision resources for the first time
+
+Come up with a cute name for your job:
+
+```shell
+./grandiso provision --job-name MyCoolJob --graph-name MyBigGraph
+```
+
+This will do two things:
+
+-   Make sure you have all Lambdas, Queues, and Results-tables provisioned in Lambda, SQS, and DynamoDB
+-   Connect your GrandIso lambda to listen for incoming messages to your SQS Queue
+
+## Kick off the job
+
+```shell
+./grandiso kickoff --job-name MyCoolJob --motif-file mymotif.motif
+```
+
+## Get the results
+
+Note that you can request results right away, but the job may not be finished yet! (You'll get an incomplete set of results, but they will all be valid mappings.)
+
+Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
+
+```shell
+./grandiso results --job-name MyCoolJob --format csv > myresults.csv
 ```
