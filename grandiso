@@ -4,12 +4,14 @@
 from typing import Optional
 
 # Standard library imports:
+import argparse
 import glob
 import io
 import json
+import logging
 import os
-import time
 import sys
+import time
 import zipfile
 from zipfile import ZipFile, ZipInfo
 
@@ -21,6 +23,9 @@ import tqdm
 # Note that for certain commands, you will also need to install Grand/GrandIso.
 
 DEBUG = True
+
+logging.basicConfig(level=logging.INFO)
+
 
 queue_name_base = "GrandIsoQ"
 function_name_base = "GrandIsoLambda"
@@ -116,7 +121,17 @@ class GrandIso:
 
     """
 
-    def __init__(self):
+    def __init__(self, dry: bool = False):
+        """
+        Create a new GrandIso client.
+
+        Arguments:
+            dry (bool: False): Whether to try-run (True) or actually perform
+                changes (False). Defaults to False (i.e. will actually kick
+                off a job when you ask it to.)
+
+        """
+        self.dry = dry
         self.lambda_client = boto3.client(
             "lambda",
             endpoint_url="http://localhost:4566",
@@ -144,7 +159,22 @@ class GrandIso:
 
         self.results_table_name = "GrandIsoResults"
         self.endpoint_url = "http://localhost:4566"
-        self._lambda_execution_role_name = "grandiso_lambda_execution"
+        self._lambda_execution_role_name = "GrandIsoLambdaExecutionRole"
+
+        self.log = logging
+
+    def teardown(self, argparser_args=None):
+        self.log.debug("Starting the teardown process.")
+        if self.dry:
+            self.log.info("This will tear down the following resources:")
+            self.log.info(
+                f" - (IAM) Lambda Execution Role: {self._lambda_execution_role_name}"
+            )
+            self.log.info(f" - (Lambda) Lambda Function:    {function_name_base}")
+            self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
+            self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
+            return
+        self.log.debug("Completed teardown process.")
 
     def create_host(self):
         import grand
@@ -333,14 +363,46 @@ class GrandIso:
 
 
 if __name__ == "__main__":
-    if sys.argv[-1] == "provision":
-        GrandIso().provision()
-    if sys.argv[-1] == "reset":
-        GrandIso().reset()
-    if sys.argv[-1] == "create_host":
-        GrandIso().create_host()
-    if sys.argv[-1] == "kickoff":
-        GrandIso().kickoff()
-    if sys.argv[-1] == "aggregate_results":
-        for res in GrandIso().aggregate_results():
-            print(res)
+
+    parser = argparse.ArgumentParser(
+        description="GrandIso subgraph isomorphism in the cloud"
+    )
+    parser.add_argument(
+        "--job-name",
+        type=str,
+        required=True,
+        help="The job name to use to refer to this subgraph isomorphism search. Make one up when calling `provision`, and then reuse for the other commands.",
+    )
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        required=False,
+        default=False,
+        help="Whether to dry-run (instead of actually running)",
+    )
+
+    grandiso = GrandIso(dry=True)
+
+    subparsers = parser.add_subparsers(help="Sub-commands.")
+
+    provision_command = subparsers.add_parser(
+        "provision", help="Provision resources for GrandIso."
+    )
+    teardown_command = subparsers.add_parser(
+        "teardown", help="Remove all traces of GrandIso from this AWS account."
+    )
+    teardown_command.set_defaults(func=grandiso.teardown)
+    args = parser.parse_args()
+    args.func(args)
+
+    # if sys.argv[-1] == "provision":
+    #     GrandIso().provision()
+    # if sys.argv[-1] == "reset":
+    #     GrandIso().reset()
+    # if sys.argv[-1] == "create_host":
+    #     GrandIso().create_host()
+    # if sys.argv[-1] == "kickoff":
+    #     GrandIso().kickoff()
+    # if sys.argv[-1] == "aggregate_results":
+    #     for res in GrandIso().aggregate_results():
+    #         print(res)
