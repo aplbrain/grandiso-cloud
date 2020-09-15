@@ -9,6 +9,7 @@ unzip numpy.whl
 
 pip install --target . sqlalchemy
 pip install --target . git+https://github.com/aplbrain/grand
+pip install --target . git+https://github.com/aplbrain/grandiso-networkx
 pip install --target . networkx
 pip install --target . pytz
 

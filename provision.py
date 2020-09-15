@@ -1,3 +1,4 @@
+from typing import Optional
 import sys
 import json
 import glob
@@ -9,6 +10,8 @@ import time
 
 import boto3
 import tqdm
+
+import networkx as nx
 
 DEBUG = True
 
@@ -58,6 +61,38 @@ class PermissiveZipFile(ZipFile):
         super(PermissiveZipFile, self).writestr(zinfo, data, compress_type)
 
 
+def _create_dynamo_table(
+    table_name: str, primary_key: str, client, read_write_units: Optional[int] = None,
+):
+    if read_write_units is not None:
+        raise NotImplementedError("Non-on-demand billing is not currently supported.")
+
+    return client.create_table(
+        TableName=table_name,
+        KeySchema=[
+            {"AttributeName": primary_key, "KeyType": "HASH"},  # Partition key
+            # {"AttributeName": "title", "KeyType": "RANGE"},  # Sort key
+        ],
+        AttributeDefinitions=[
+            {"AttributeName": primary_key, "AttributeType": "S"},
+            # {"AttributeName": "title", "AttributeType": "S"},
+        ],
+        BillingMode="PAY_PER_REQUEST",
+    )
+
+
+def _dynamo_table_exists(table_name: str, client: boto3.client):
+    """
+    Check to see if the DynamoDB table already exists.
+
+    Returns:
+        bool: Whether table exists
+
+    """
+    existing_tables = client.list_tables()["TableNames"]
+    return table_name in existing_tables
+
+
 class GrandIso:
     def __init__(self):
         self.lambda_client = boto3.client(
@@ -85,6 +120,43 @@ class GrandIso:
             aws_secret_access_key="foo",
         )
 
+        self.results_table_name = "GrandIsoResults"
+        self.endpoint_url = "http://localhost:4566"
+
+    def create_host(self):
+        import grand
+        from grand.backends import DynamoDBBackend
+
+        G = grand.Graph(backend=DynamoDBBackend(dynamodb_url=self.endpoint_url))
+
+        G.nx.add_edge("A", "B")
+        G.nx.add_edge("B", "C")
+        G.nx.add_edge("C", "A")
+
+    def _scan_table(self, table, scan_kwargs: dict = None):
+        done = False
+        start_key = None
+        results = []
+        scan_kwargs = scan_kwargs or {}
+        while not done:
+            if start_key:
+                scan_kwargs["ExclusiveStartKey"] = start_key
+            response = table.scan(**scan_kwargs)
+            results += response.get("Items", [])
+            start_key = response.get("LastEvaluatedKey", None)
+            done = start_key is None
+        return results
+
+    def aggregate_results(self):
+        dynamodb_resource = boto3.resource(
+            "dynamodb",
+            endpoint_url=self.endpoint_url,
+            aws_access_key_id="foo",
+            aws_secret_access_key="foo",
+        )
+        results_table = dynamodb_resource.Table(self.results_table_name)
+        return self._scan_table(results_table)
+
     def reset(self):
         # The grand iso is dead!
         self.purge_queue()
@@ -98,13 +170,28 @@ class GrandIso:
 
         queue_arn = self.create_queue()
         lambda_arn = self.create_lambda()
-        # table_arn = self.create_table()
+        table_arn = self.create_table()
 
         self.attach_queue_event(queue_arn, lambda_arn)
 
     def kickoff(self):
         # try invoking:
-        print(self.queue_push('{"foo": "bar"}'))
+        motif = nx.DiGraph()
+        motif.add_edge("A", "B")
+        motif.add_edge("B", "C")
+        motif.add_edge("C", "A")
+
+        print(
+            self.queue_push(
+                json.dumps(
+                    {
+                        "motif": nx.readwrite.node_link_data(motif),
+                        "candidate": {},
+                        "ID": 1,
+                    }
+                )
+            )
+        )
 
     def purge_queue(self):
         queue_url = self.sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
@@ -193,10 +280,9 @@ class GrandIso:
             lambda_arn = lambda_function["FunctionArn"]
         return lambda_arn
 
-    # def create_table(self):
-    #     def self.dynamo_client.create_table(
-    #         TableName=table_name,
-    #     )
+    def create_table(self):
+        if not _dynamo_table_exists(self.results_table_name, self.dynamo_client):
+            _create_dynamo_table(self.results_table_name, "ID", self.dynamo_client)
 
     # def invoke_lambda(self):
     #     response = self.lambda_client.invoke(FunctionName=function_name)
@@ -209,5 +295,10 @@ if __name__ == "__main__":
         GrandIso().provision()
     if sys.argv[-1] == "reset":
         GrandIso().reset()
+    if sys.argv[-1] == "create_host":
+        GrandIso().create_host()
     if sys.argv[-1] == "kickoff":
         GrandIso().kickoff()
+    if sys.argv[-1] == "aggregate_results":
+        for res in GrandIso().aggregate_results():
+            print(res)
