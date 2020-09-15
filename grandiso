@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
 
+# Type imports:
 from typing import Optional
-import sys
-import json
+
+# Standard library imports:
 import glob
-import os
 import io
+import json
+import os
+import time
+import sys
 import zipfile
 from zipfile import ZipFile, ZipInfo
-import time
 
+# Installed imports:
 import boto3
+import networkx as nx
 import tqdm
 
-import networkx as nx
+# Note that for certain commands, you will also need to install Grand/GrandIso.
 
 DEBUG = True
 
-queue_name = "GrandIsoQ"
-function_name = "GrandIsoLambda"
+queue_name_base = "GrandIsoQ"
+function_name_base = "GrandIsoLambda"
 
 ASSUME_POLICY = """{
   "Version": "2012-10-17",
@@ -39,12 +44,16 @@ ASSUME_POLICY = """{
   ]
 }"""
 
-FUNCTION_HANDLER = """
-
-"""
-
 
 class PermissiveZipFile(ZipFile):
+    """
+    A Zipfile class that also sets file permission flags.
+
+    This is required for the lambda runtime. Thanks to the answerers at
+    https://stackoverflow.com/questions/434641/ for insights and useful code.
+
+    """
+
     def writestr(self, zinfo_or_arcname, data, compress_type=None):
         if not isinstance(zinfo_or_arcname, ZipInfo):
             zinfo = ZipInfo(
@@ -66,19 +75,21 @@ class PermissiveZipFile(ZipFile):
 def _create_dynamo_table(
     table_name: str, primary_key: str, client, read_write_units: Optional[int] = None,
 ):
+    """
+    Create a new dynamoDB table.
+
+    """
     if read_write_units is not None:
         raise NotImplementedError("Non-on-demand billing is not currently supported.")
 
     return client.create_table(
         TableName=table_name,
         KeySchema=[
-            {"AttributeName": primary_key, "KeyType": "HASH"},  # Partition key
-            # {"AttributeName": "title", "KeyType": "RANGE"},  # Sort key
+            # Partition/hash key
+            {"AttributeName": primary_key, "KeyType": "HASH"},
         ],
-        AttributeDefinitions=[
-            {"AttributeName": primary_key, "AttributeType": "S"},
-            # {"AttributeName": "title", "AttributeType": "S"},
-        ],
+        AttributeDefinitions=[{"AttributeName": primary_key, "AttributeType": "S"},],
+        # Currently do not support billing methods besides on-demand.
         BillingMode="PAY_PER_REQUEST",
     )
 
@@ -96,6 +107,15 @@ def _dynamo_table_exists(table_name: str, client: boto3.client):
 
 
 class GrandIso:
+    """
+    A class responsible for creating, managing, and manipulating GrandIso jobs
+    in the cloud.
+
+    This system currently only supports running locally, and running one job
+    at a time before it is torn down and restarted.
+
+    """
+
     def __init__(self):
         self.lambda_client = boto3.client(
             "lambda",
@@ -124,6 +144,7 @@ class GrandIso:
 
         self.results_table_name = "GrandIsoResults"
         self.endpoint_url = "http://localhost:4566"
+        self._lambda_execution_role_name = "grandiso_lambda_execution"
 
     def create_host(self):
         import grand
@@ -183,24 +204,27 @@ class GrandIso:
         motif.add_edge("B", "C")
         motif.add_edge("C", "A")
 
-        print(
-            self.queue_push(
-                json.dumps(
-                    {
-                        "motif": nx.readwrite.node_link_data(motif),
-                        "candidate": {},
-                        "ID": 1,
-                    }
-                )
-            )
+        initial_queue_item = json.dumps(
+            {
+                # A version of this motif:
+                # TODO: construct the motif from disk:
+                "motif": nx.readwrite.node_link_data(motif),
+                # An empty candidate (formerly called "backbone"):
+                "candidate": {},
+                # An arbitrary ID as PK:
+                "ID": 1,
+            }
         )
 
+        # TODO: Do something cleverer than printing this:
+        print(self.queue_push(initial_queue_item))
+
     def purge_queue(self):
-        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
+        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
         self.sqs_client.purge_queue(QueueUrl=queue_url)
 
     def teardown_lambda(self):
-        self.lambda_client.delete_function(FunctionName=function_name)
+        self.lambda_client.delete_function(FunctionName=function_name_base)
 
     def attach_queue_event(self, queue_arn, lambda_arn):
         self.lambda_client.create_event_source_mapping(
@@ -211,13 +235,12 @@ class GrandIso:
         )
 
     def queue_push(self, value):
-        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name)["QueueUrl"]
+        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
         self.sqs_client.send_message(QueueUrl=queue_url, MessageBody=value)
 
     def create_queue(self):
-
         new_queue_request = self.sqs_client.create_queue(
-            QueueName=queue_name, Attributes={"FifoQueue": "false"}
+            QueueName=queue_name_base, Attributes={"FifoQueue": "false"}
         )
 
         queue_arn = self.sqs_client.get_queue_attributes(
@@ -228,7 +251,15 @@ class GrandIso:
         return queue_arn
 
     def generate_zip(self):
+        """
+        Construct a zip file from the vendored and nonvendored libraries.
+
+        """
+
         def zipdir(dpath, zipf):
+            """
+            Zip an entire directory, recursively.
+            """
             _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
             for fp in _debug_wrap(
                 glob.glob(os.path.join(dpath, "**/*"), recursive=True)
@@ -238,7 +269,10 @@ class GrandIso:
 
         mem_zip = io.BytesIO()
 
+        # A list of vendor directories:
         vendor_dirs = ["lambda/vendor"]
+
+        # A list of files to include at root level:
         files = ["lambda/main.py"]
 
         with PermissiveZipFile(
@@ -253,43 +287,49 @@ class GrandIso:
         return mem_zip.getvalue()
 
     def create_lambda(self):
-        # First, create a lambda execution role in IAM.
+        """
+        Create a lambda for GrandIso in general.
 
+        Note that this is not specific to a job, and so it is not prefixed with
+        namespacing variables.
+
+        """
+        # First, create a lambda execution role in IAM.
         # This means creating a Policy for a user:
         try:
-            role = self.iam_client.get_role(RoleName="grandiso_lambda_execution")
+            role = self.iam_client.get_role(RoleName=self._lambda_execution_role_name)
         except:
             role = self.iam_client.create_role(
-                RoleName="grandiso_lambda_execution",
+                RoleName=self._lambda_execution_role_name,
                 AssumeRolePolicyDocument=ASSUME_POLICY,
             )
         role_arn = role["Role"]["Arn"]
 
+        # Next, create the lambda itself:
         try:
             lambda_function = self.lambda_client.get_function(
-                FunctionName=function_name
+                FunctionName=function_name_base
             )
             lambda_arn = lambda_function["Configuration"]["FunctionArn"]
         except:
             lambda_function = self.lambda_client.create_function(
-                FunctionName=function_name,
+                FunctionName=function_name_base,
                 Runtime="python3.8",
                 Role=role_arn,
                 Handler="main.main",
                 Code={"ZipFile": self.generate_zip()},
             )
-            print(lambda_function)
+            # print(lambda_function)
             lambda_arn = lambda_function["FunctionArn"]
         return lambda_arn
 
     def create_table(self):
+        """
+        Create a DynamoDB table to hold the results from this job.
+
+        """
         if not _dynamo_table_exists(self.results_table_name, self.dynamo_client):
             _create_dynamo_table(self.results_table_name, "ID", self.dynamo_client)
-
-    # def invoke_lambda(self):
-    #     response = self.lambda_client.invoke(FunctionName=function_name)
-    #     # print(response)
-    #     return json.load(response["Payload"])
 
 
 if __name__ == "__main__":
