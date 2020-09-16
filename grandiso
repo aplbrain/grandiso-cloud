@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # Type imports:
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 # Standard library imports:
 import argparse
@@ -112,6 +112,44 @@ def _generate_zip():
             zf.write(file, arcname=file.replace("lambda/", ""))
 
     return mem_zip.getvalue()
+
+
+class Motif:
+    """
+    A class to manage reading motifs in a variety of formats.
+    """
+
+    def __init__(self, graph: nx.Graph) -> None:
+        """
+        Create a new Motif from a file.
+        """
+        self.graph = graph
+
+    @staticmethod
+    def from_file(filename: str, directed: bool = True) -> "Motif":
+        if filename.endswith(".motif"):
+            return Motif.from_motif(filename, directed)
+        return Motif.from_edgelist(filename, directed)
+
+    @staticmethod
+    def from_motif(filename: str, directed: bool = True) -> "Motif":
+        raise NotImplementedError()
+        # return Motif()
+
+    @staticmethod
+    def from_edgelist(filename: str, directed: bool = True) -> "Motif":
+        """
+        Render to a networkx.Graph.
+
+        """
+        return Motif(
+            graph=nx.read_edgelist(
+                filename, create_using=(nx.DiGraph if directed else nx.Graph)
+            )
+        )
+
+    def to_nx(self) -> nx.Graph:
+        return self.graph
 
 
 def _scan_table(table, scan_kwargs: dict = None):
@@ -233,6 +271,7 @@ class GrandIso:
         return self.lambda_client.delete_function(FunctionName=function_name_base)
 
     def _teardown_queue(self):
+        self._purge_queue()
         return
 
     def _teardown_tables(self):
@@ -251,8 +290,8 @@ class GrandIso:
         to your job.
 
         """
-        self._teardown_lambda()
         self._teardown_queue()
+        self._teardown_lambda()
         self._teardown_tables()
         return
 
@@ -431,7 +470,11 @@ class GrandIso:
         self.sqs_client.send_message(QueueUrl=queue_url, MessageBody=value)
 
     def kickoff(
-        self, motif_nx: nx.Graph, job_name: str, initial_candidate: dict = None
+        self,
+        motif_nx: nx.Graph,
+        job_name: str,
+        directed: bool = True,
+        initial_candidate: dict = None,
     ):
 
         initial_queue_item = json.dumps(
@@ -444,6 +487,7 @@ class GrandIso:
                 # "ID": str(uuid4()),
                 # Add job name
                 "job": job_name,
+                "directed": directed,
             }
         )
         # TODO: Do something cleverer than printing this:
@@ -455,17 +499,22 @@ class GrandIso:
                 "You must provide a job name. From the command-line, you can specify one with --job."
             )
         job_name = argparser_args.job
+        directed = argparser_args.directed
+        if not argparser_args.motif:
+            raise ValueError(
+                "You must provide a motif. From the command-line, you can specify a file that contains a motif with --motif."
+            )
+        # TODO: Directed vs non...from cli
+        motif = Motif.from_file(argparser_args.motif, directed=directed).to_nx()
+
         if self.dry:
             self.log.info("This will begin the motif search in the graph.")
+            self.log.info("Motif statistics:")
+            self.log.info(f"  |V|: {len(motif)}")
+            self.log.info(f"  |E|: {len(motif.edges())}")
             return
 
-        # TODO: construct the motif from disk
-        motif = nx.DiGraph()
-        motif.add_edge("A", "B")
-        motif.add_edge("B", "C")
-        motif.add_edge("C", "A")
-
-        self.kickoff(motif, job_name)
+        self.kickoff(motif, job_name, directed=directed)
 
 
 def cli_main():
@@ -519,6 +568,12 @@ def cli_main():
             + "(a.weight == 5) will be searched; attribute comparator "
             + "information (a.weight > 5) will be omitted.",
         ),
+    )
+    kickoff_command.add_argument(
+        "--directed",
+        type=bool,
+        default=True,
+        help="Whether to assume directed motif and host graphs.",
     )
     kickoff_command.add_argument(
         "--job",
