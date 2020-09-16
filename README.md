@@ -77,7 +77,13 @@ If you are using localstack, you should specify all endpoint URLs in the steps b
 
 # Usage
 
-You are now ready to begin using this package. Start by provisioning your resources:
+You are now ready to begin using this package. All of the following commands can be run with `--dry` or `--dry=true` to prevent them from affecting your AWS account:
+
+```shell
+./grandiso --dry=true --job-name "Example" provision
+```
+
+Start by provisioning your resources:
 
 ## Provision resources for the first time
 

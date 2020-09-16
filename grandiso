@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # Type imports:
-from typing import Optional
+from typing import Optional, Tuple
 
 # Standard library imports:
 import argparse
@@ -163,7 +163,7 @@ class GrandIso:
 
         self.log = logging
 
-    def teardown(self, argparser_args=None):
+    def cli_teardown(self, argparser_args=None):
         self.log.debug("Starting the teardown process.")
         if self.dry:
             self.log.info("This will tear down the following resources:")
@@ -218,14 +218,31 @@ class GrandIso:
         # Long live the grand iso!
         self.provision()
 
-    def provision(self):
-        # provision resources
-
+    def provision(self) -> Tuple[str, str, str]:
         queue_arn = self.create_queue()
         lambda_arn = self.create_lambda()
         table_arn = self.create_table()
+        return (queue_arn, lambda_arn, table_arn)
 
+    def cli_provision(self, argparser_args=None):
+        self.log.debug("Starting the resource provisioning process.")
+        if self.dry:
+            self.log.info("This will provision the following resources:")
+            self.log.info(
+                f" - (IAM) Lambda Execution Role: {self._lambda_execution_role_name}"
+            )
+            self.log.info(f" - (Lambda) Lambda Function:    {function_name_base}")
+            self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
+            self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
+            return
+
+        (queue_arn, lambda_arn, table_arn) = self.provision()
+
+        self.log.debug(f"Created table with ARN [{table_arn}].")
+
+        self.log.debug(f"Attaching lambda [{lambda_arn}] to queue [{queue_arn}].")
         self.attach_queue_event(queue_arn, lambda_arn)
+        self.log.debug("Completed resource provisioning process.")
 
     def kickoff(self):
         # try invoking:
@@ -374,7 +391,7 @@ if __name__ == "__main__":
         help="The job name to use to refer to this subgraph isomorphism search. Make one up when calling `provision`, and then reuse for the other commands.",
     )
     parser.add_argument(
-        "--debug",
+        "--dry",
         type=bool,
         required=False,
         default=False,
@@ -385,13 +402,17 @@ if __name__ == "__main__":
 
     subparsers = parser.add_subparsers(help="Sub-commands.")
 
+    # Provision
     provision_command = subparsers.add_parser(
         "provision", help="Provision resources for GrandIso."
     )
+    provision_command.set_defaults(func=grandiso.cli_provision)
+
+    # Teardown
     teardown_command = subparsers.add_parser(
         "teardown", help="Remove all traces of GrandIso from this AWS account."
     )
-    teardown_command.set_defaults(func=grandiso.teardown)
+    teardown_command.set_defaults(func=grandiso.cli_teardown)
     args = parser.parse_args()
     args.func(args)
 
