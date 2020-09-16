@@ -80,6 +80,40 @@ class PermissiveZipFile(ZipFile):
         super(PermissiveZipFile, self).writestr(zinfo, data, compress_type)
 
 
+def _generate_zip():
+    """
+    Construct a zip file from the vendored and nonvendored libraries.
+
+    """
+    # TODO: Move to module top level
+
+    def zipdir(dpath, zipf):
+        """
+        Zip an entire directory, recursively.
+        """
+        _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
+        for fp in _debug_wrap(glob.glob(os.path.join(dpath, "**/*"), recursive=True)):
+            base = os.path.commonpath([dpath, fp])
+            zipf.write(fp, arcname=fp.replace(base + "/", ""))
+
+    mem_zip = io.BytesIO()
+
+    # A list of vendor directories:
+    vendor_dirs = ["lambda/vendor"]
+
+    # A list of files to include at root level:
+    files = ["lambda/main.py"]
+
+    with PermissiveZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for directory in vendor_dirs:
+            zipdir(directory, zf)
+
+        for file in files:
+            zf.write(file, arcname=file.replace("lambda/", ""))
+
+    return mem_zip.getvalue()
+
+
 def _scan_table(table, scan_kwargs: dict = None):
     """
     DynamoDB convenience function to scan all results from a table.
@@ -335,7 +369,7 @@ class GrandIso:
                 Runtime="python3.8",
                 Role=role_arn,
                 Handler="main.main",
-                Code={"ZipFile": self.generate_zip()},
+                Code={"ZipFile": _generate_zip()},
             )
             # print(lambda_function)
             lambda_arn = lambda_function["FunctionArn"]
@@ -432,43 +466,6 @@ class GrandIso:
         motif.add_edge("C", "A")
 
         self.kickoff(motif, job_name)
-
-    def generate_zip(self):
-        """
-        Construct a zip file from the vendored and nonvendored libraries.
-
-        """
-        # TODO: Move to module top level
-
-        def zipdir(dpath, zipf):
-            """
-            Zip an entire directory, recursively.
-            """
-            _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
-            for fp in _debug_wrap(
-                glob.glob(os.path.join(dpath, "**/*"), recursive=True)
-            ):
-                base = os.path.commonpath([dpath, fp])
-                zipf.write(fp, arcname=fp.replace(base + "/", ""))
-
-        mem_zip = io.BytesIO()
-
-        # A list of vendor directories:
-        vendor_dirs = ["lambda/vendor"]
-
-        # A list of files to include at root level:
-        files = ["lambda/main.py"]
-
-        with PermissiveZipFile(
-            mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
-            for directory in vendor_dirs:
-                zipdir(directory, zf)
-
-            for file in files:
-                zf.write(file, arcname=file.replace("lambda/", ""))
-
-        return mem_zip.getvalue()
 
 
 def cli_main():
