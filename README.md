@@ -25,7 +25,7 @@ I recommend saving this configuration in `~/.aws/credentials` and then referenci
 
 ## Installing Dependencies
 
-In order to use tis package, you will need the packages listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
+In order to use this package, you will need the libraries listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
 
 ```shell
 pip install -r requirements.txt

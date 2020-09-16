@@ -79,10 +79,13 @@ class PermissiveZipFile(ZipFile):
 
 
 def _create_dynamo_table(
-    table_name: str, primary_key: str, client, read_write_units: Optional[int] = None,
+    table_name: str,
+    primary_key: str,
+    client: boto3.client,
+    read_write_units: Optional[int] = None,
 ):
     """
-    Create a new dynamoDB table.
+    Create a new DynamoDB table.
 
     """
     if read_write_units is not None:
@@ -117,12 +120,19 @@ class GrandIso:
     A class responsible for creating, managing, and manipulating GrandIso jobs
     in the cloud.
 
-    This system currently only supports running locally, and running one job
-    at a time before it is torn down and restarted.
+    Certain resources, like the Lambda and SQS queue, are reused across all of
+    the GrandIso jobs that you run on the same account. Other resources, like
+    the results table in DynamoDB, are specific to individual jobs.
 
     """
 
-    def __init__(self, dry: bool = False):
+    def __init__(
+        self,
+        endpoint_url: str = None,
+        aws_access_key_id: str = None,
+        aws_secret_access_key: str = None,
+        dry: bool = False,
+    ):
         """
         Create a new GrandIso client.
 
@@ -130,33 +140,27 @@ class GrandIso:
             dry (bool: False): Whether to try-run (True) or actually perform
                 changes (False). Defaults to False (i.e. will actually kick
                 off a job when you ask it to.)
+            endpoint_url (str: None): The URL against which to run commands
+                (e.g. an AWS URL or a localstack URL). If none is provided, the
+                default is AWS. You can also provide `"http://localhost:4566"`
+                to run against an already-running localstack.
+            aws_access_key_id (str: None): Optional credentials for AWS
+            aws_secret_access_key (str: None): Optional credentials for AWS
 
         """
+        _aws_kwargs = {}
+        if aws_access_key_id:
+            _aws_kwargs["aws_access_key_id"] = aws_access_key_id
+        if aws_secret_access_key:
+            _aws_kwargs["aws_secret_access_key"] = aws_secret_access_key
+        if endpoint_url:
+            _aws_kwargs["endpoint_url"] = endpoint_url
+
         self.dry = dry
-        self.lambda_client = boto3.client(
-            "lambda",
-            endpoint_url="http://localhost:4566",
-            aws_access_key_id="foo",
-            aws_secret_access_key="foo",
-        )
-        self.iam_client = boto3.client(
-            "iam",
-            endpoint_url="http://localhost:4566",
-            aws_access_key_id="foo",
-            aws_secret_access_key="foo",
-        )
-        self.sqs_client = boto3.client(
-            "sqs",
-            endpoint_url="http://localhost:4566",
-            aws_access_key_id="foo",
-            aws_secret_access_key="foo",
-        )
-        self.dynamo_client = boto3.client(
-            "dynamodb",
-            endpoint_url="http://localhost:4566",
-            aws_access_key_id="foo",
-            aws_secret_access_key="foo",
-        )
+        self.lambda_client = boto3.client("lambda", **_aws_kwargs,)
+        self.iam_client = boto3.client("iam", **_aws_kwargs,)
+        self.sqs_client = boto3.client("sqs", **_aws_kwargs,)
+        self.dynamo_client = boto3.client("dynamodb", **_aws_kwargs,)
 
         self.results_table_name = "GrandIsoResults"
         self.endpoint_url = "http://localhost:4566"
@@ -164,7 +168,40 @@ class GrandIso:
 
         self.log = logging
 
+    def _teardown_lambda(self):
+        return self.lambda_client.delete_function(FunctionName=function_name_base)
+
+    def _teardown_queue(self):
+        return
+
+    def _teardown_tables(self):
+        return
+
+    def teardown(self):
+        """
+        Tear down all resources associated with GrandIso in this account.
+
+        Note that this can take several minutes, and specifically when deleting
+        a SQS Queue, you may not be able to create a new Queue with the same
+        name until several minutes have passed.
+
+        If you are trying to start fresh, you should NOT call the GrandIso
+        teardown function, and instead you should remove the resources specific
+        to your job.
+
+        """
+        self._teardown_lambda()
+        self._teardown_queue()
+        self._teardown_tables()
+        return
+
     def cli_teardown(self, argparser_args=None):
+        """
+        Run the teardown command from the command-line.
+
+        See GrandIso#teardown.
+
+        """
         self.log.debug("Starting the teardown process.")
         if self.dry:
             self.log.info("This will tear down the following resources:")
@@ -175,7 +212,18 @@ class GrandIso:
             self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
             self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
             return
+        # Perform the actual teardown:
+        self.teardown()
         self.log.debug("Completed teardown process.")
+
+    # Purging:
+    def _purge_queue(self):
+        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
+        self.sqs_client.purge_queue(QueueUrl=queue_url)
+
+    def cancel(self):
+        self._purge_queue()
+        return
 
     def create_host(self):
         import grand
@@ -225,14 +273,6 @@ class GrandIso:
 
     def print_cli_results(self, argparser_args=None):
         print(self.cli_results(argparser_args))
-
-    # def reset(self):
-    #     # The grand iso is dead!
-    #     self.purge_queue()
-    #     self.teardown_lambda()
-
-    #     # Long live the grand iso!
-    #     self.provision()
 
     def provision(self) -> Tuple[str, str, str]:
         queue_arn = self.create_queue()
@@ -288,13 +328,6 @@ class GrandIso:
         )
         # TODO: Do something cleverer than printing this:
         self.log.debug(self.queue_push(initial_queue_item))
-
-    def purge_queue(self):
-        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
-        self.sqs_client.purge_queue(QueueUrl=queue_url)
-
-    def teardown_lambda(self):
-        self.lambda_client.delete_function(FunctionName=function_name_base)
 
     def attach_queue_event(self, queue_arn, lambda_arn):
         self.lambda_client.create_event_source_mapping(
@@ -402,8 +435,7 @@ class GrandIso:
             _create_dynamo_table(self.results_table_name, "ID", self.dynamo_client)
 
 
-if __name__ == "__main__":
-
+def cli_main():
     parser = argparse.ArgumentParser(
         description="GrandIso subgraph isomorphism in the cloud"
     )
@@ -413,7 +445,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--job-name",
         type=str,
-        required=True,
+        required=False,
         help=(
             "The job name to use to refer to this subgraph isomorphism "
             + "search. Make one up when calling `provision`, and then reuse "
@@ -428,9 +460,14 @@ if __name__ == "__main__":
         help="Whether to dry-run (instead of actually running)",
     )
 
-    grandiso = GrandIso(dry=True)
+    grandiso = GrandIso(
+        endpoint_url="http://localhost:4566",
+        aws_access_key_id="grandiso",
+        aws_secret_access_key="grandiso",
+        dry=True,
+    )
 
-    subparsers = parser.add_subparsers(help="Sub-commands.")
+    subparsers = parser.add_subparsers(help="Commands.")
 
     # Provision
     provision_command = subparsers.add_parser(
@@ -487,3 +524,8 @@ if __name__ == "__main__":
     # if sys.argv[-1] == "aggregate_results":
     #     for res in GrandIso().aggregate_results():
     #         print(res)
+
+
+if __name__ == "__main__":
+
+    cli_main()
