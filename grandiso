@@ -18,6 +18,7 @@ from zipfile import ZipFile, ZipInfo
 # Installed imports:
 import boto3
 import networkx as nx
+import pandas as pd
 import tqdm
 
 # Note that for certain commands, you will also need to install Grand/GrandIso.
@@ -210,13 +211,28 @@ class GrandIso:
         results_table = dynamodb_resource.Table(self.results_table_name)
         return self._scan_table(results_table)
 
-    def reset(self):
-        # The grand iso is dead!
-        self.purge_queue()
-        self.teardown_lambda()
+    def cli_results(self, argparser_args=None):
+        if argparser_args.format == "csv":
+            return pd.DataFrame(
+                [res["candidate"] for res in self.aggregate_results()]
+            ).to_csv()
+        if argparser_args.format == "json":
+            return pd.DataFrame(
+                [res["candidate"] for res in self.aggregate_results()]
+            ).to_json()
+        if argparser_args.format == "raw":
+            return self.aggregate_results()
 
-        # Long live the grand iso!
-        self.provision()
+    def print_cli_results(self, argparser_args=None):
+        print(self.cli_results(argparser_args))
+
+    # def reset(self):
+    #     # The grand iso is dead!
+    #     self.purge_queue()
+    #     self.teardown_lambda()
+
+    #     # Long live the grand iso!
+    #     self.provision()
 
     def provision(self) -> Tuple[str, str, str]:
         queue_arn = self.create_queue()
@@ -244,27 +260,34 @@ class GrandIso:
         self.attach_queue_event(queue_arn, lambda_arn)
         self.log.debug("Completed resource provisioning process.")
 
-    def kickoff(self):
-        # try invoking:
+    def cli_kickoff(self, argparser_args=None):
+        if self.dry:
+            self.log.info("This will begin the motif search in the graph.")
+            return
+
         motif = nx.DiGraph()
         motif.add_edge("A", "B")
         motif.add_edge("B", "C")
         motif.add_edge("C", "A")
+        # TODO: construct the motif from disk:
+
+        self.kickoff(motif)
+
+    def kickoff(self, motif_nx: nx.Graph, initial_candidate: dict = None):
 
         initial_queue_item = json.dumps(
             {
                 # A version of this motif:
-                # TODO: construct the motif from disk:
-                "motif": nx.readwrite.node_link_data(motif),
+                "motif": nx.readwrite.node_link_data(motif_nx),
                 # An empty candidate (formerly called "backbone"):
-                "candidate": {},
+                "candidate": initial_candidate or {},
                 # An arbitrary ID as PK:
+                # TODO: uuid4
                 "ID": 1,
             }
         )
-
         # TODO: Do something cleverer than printing this:
-        print(self.queue_push(initial_queue_item))
+        self.log.debug(self.queue_push(initial_queue_item))
 
     def purge_queue(self):
         queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
@@ -384,11 +407,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="GrandIso subgraph isomorphism in the cloud"
     )
+
+    # Global arguments:
+
     parser.add_argument(
         "--job-name",
         type=str,
         required=True,
-        help="The job name to use to refer to this subgraph isomorphism search. Make one up when calling `provision`, and then reuse for the other commands.",
+        help=(
+            "The job name to use to refer to this subgraph isomorphism "
+            + "search. Make one up when calling `provision`, and then reuse "
+            + "the same name for the other commands."
+        ),
     )
     parser.add_argument(
         "--dry",
@@ -413,17 +443,47 @@ if __name__ == "__main__":
         "teardown", help="Remove all traces of GrandIso from this AWS account."
     )
     teardown_command.set_defaults(func=grandiso.cli_teardown)
+
+    # Kickoff
+    kickoff_command = subparsers.add_parser(
+        "kickoff", help="Start the search for a given motif."
+    )
+    kickoff_command.add_argument(
+        "--motif",
+        type=str,
+        required=True,
+        help=(
+            "The motif for which to begin searching. Should be a file that "
+            + "contains a .motif definition in the DotMotif DSL. Note that "
+            + "only structural (edges and nodes) and attribute information "
+            + "(a.weight == 5) will be searched; attribute comparator "
+            + "information (a.weight > 5) will be omitted.",
+        ),
+    )
+    kickoff_command.set_defaults(func=grandiso.cli_kickoff)
+
+    # Kickoff
+    results_command = subparsers.add_parser(
+        "results", help="Print the results from the search."
+    )
+    results_command.add_argument(
+        "--format",
+        default="csv",
+        type=str,
+        required=False,
+        help="The format (csv|json) in which to return results.",
+    )
+    results_command.set_defaults(func=grandiso.print_cli_results)
+
+    # Currently does not support `reset`. I think that's correct...
+
+    # Parse args:
     args = parser.parse_args()
+    grandiso.dry = args.dry
     args.func(args)
 
-    # if sys.argv[-1] == "provision":
-    #     GrandIso().provision()
-    # if sys.argv[-1] == "reset":
-    #     GrandIso().reset()
     # if sys.argv[-1] == "create_host":
     #     GrandIso().create_host()
-    # if sys.argv[-1] == "kickoff":
-    #     GrandIso().kickoff()
     # if sys.argv[-1] == "aggregate_results":
     #     for res in GrandIso().aggregate_results():
     #         print(res)

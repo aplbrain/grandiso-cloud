@@ -101,7 +101,7 @@ This will do two things:
 ## Kick off the job
 
 ```shell
-./grandiso kickoff --job-name MyCoolJob --motif-file mymotif.motif
+./grandiso kickoff --job-name MyCoolJob --motif mymotif.motif
 ```
 
 ## Get the results
