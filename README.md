@@ -8,7 +8,7 @@ _Grand-Iso_ is a subgraph isomorphism algorithm that leverages serverless techno
 
 > <small>\* You may discover that "infinite" here is predominantly bounded by your wallet, which is no joke.</small>
 
-For an overview of the algorithm at work here, see [docs/algorithm.md](docs/algorithm.md).
+For an overview of the algorithm and cloud architecture at work here, see [docs/algorithm.md](docs/algorithm.md).
 
 # Preparation
 

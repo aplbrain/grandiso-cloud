@@ -1,5 +1,7 @@
 ## Pseudocode for novel "Grand-Iso" algorithm
 
+![](Architecture.svg)
+
 ```
 - Provision a DynamoDB table for result storage.
 - Preprocessing
