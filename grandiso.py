@@ -78,6 +78,24 @@ class PermissiveZipFile(ZipFile):
         super(PermissiveZipFile, self).writestr(zinfo, data, compress_type)
 
 
+def _scan_table(table, scan_kwargs: dict = None):
+    """
+    DynamoDB convenience function to scan all results from a table.
+    """
+    done = False
+    start_key = None
+    results = []
+    scan_kwargs = scan_kwargs or {}
+    while not done:
+        if start_key:
+            scan_kwargs["ExclusiveStartKey"] = start_key
+        response = table.scan(**scan_kwargs)
+        results += response.get("Items", [])
+        start_key = response.get("LastEvaluatedKey", None)
+        done = start_key is None
+    return results
+
+
 def _create_dynamo_table(
     table_name: str,
     primary_key: str,
@@ -85,7 +103,7 @@ def _create_dynamo_table(
     read_write_units: Optional[int] = None,
 ):
     """
-    Create a new DynamoDB table.
+    DynamoDB convenience function to create a new DynamoDB table.
 
     """
     if read_write_units is not None:
@@ -105,7 +123,7 @@ def _create_dynamo_table(
 
 def _dynamo_table_exists(table_name: str, client: boto3.client):
     """
-    Check to see if the DynamoDB table already exists.
+    DynamoDB convenience function to check if a DynamoDB table already exists.
 
     Returns:
         bool: Whether table exists
@@ -235,20 +253,6 @@ class GrandIso:
         G.nx.add_edge("B", "C")
         G.nx.add_edge("C", "A")
 
-    def _scan_table(self, table, scan_kwargs: dict = None):
-        done = False
-        start_key = None
-        results = []
-        scan_kwargs = scan_kwargs or {}
-        while not done:
-            if start_key:
-                scan_kwargs["ExclusiveStartKey"] = start_key
-            response = table.scan(**scan_kwargs)
-            results += response.get("Items", [])
-            start_key = response.get("LastEvaluatedKey", None)
-            done = start_key is None
-        return results
-
     def aggregate_results(self):
         dynamodb_resource = boto3.resource(
             "dynamodb",
@@ -257,7 +261,7 @@ class GrandIso:
             aws_secret_access_key="foo",
         )
         results_table = dynamodb_resource.Table(self.results_table_name)
-        return self._scan_table(results_table)
+        return _scan_table(results_table)
 
     def cli_results(self, argparser_args=None):
         if argparser_args.format == "csv":
