@@ -90,7 +90,7 @@ Start by provisioning your resources:
 Come up with a cute name for your job:
 
 ```shell
-./grandiso --job MyCoolJob provision --graph-name MyBigGraph
+./grandiso provision --graph-name MyBigGraph
 ```
 
 This will do two things:
@@ -101,7 +101,7 @@ This will do two things:
 ## Kick off the job
 
 ```shell
-./grandiso --job MyCoolJob kickoff --motif mymotif.motif
+./grandiso kickoff --job MyCoolJob --motif mymotif.motif
 ```
 
 ## Get the results
@@ -111,5 +111,5 @@ Note that you can request results right away, but the job may not be finished ye
 Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
 
 ```shell
-./grandiso --job MyCoolJob results --format csv > myresults.csv
+./grandiso results --job MyCoolJob --format csv > myresults.csv
 ```
