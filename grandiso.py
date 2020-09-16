@@ -181,10 +181,16 @@ class GrandIso:
         self.dynamo_client = boto3.client("dynamodb", **_aws_kwargs,)
 
         self.results_table_name = "GrandIsoResults"
-        self.endpoint_url = "http://localhost:4566"
+        self.endpoint_url = endpoint_url
         self._lambda_execution_role_name = "GrandIsoLambdaExecutionRole"
 
         self.log = logging
+
+    ##
+    #
+    # Teardown
+    #
+    ##
 
     def _teardown_lambda(self):
         return self.lambda_client.delete_function(FunctionName=function_name_base)
@@ -234,7 +240,12 @@ class GrandIso:
         self.teardown()
         self.log.debug("Completed teardown process.")
 
-    # Purging:
+    ##
+    #
+    # Purging & Cancellation
+    #
+    ##
+
     def _purge_queue(self):
         queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
         self.sqs_client.purge_queue(QueueUrl=queue_url)
@@ -252,6 +263,12 @@ class GrandIso:
         G.nx.add_edge("A", "B")
         G.nx.add_edge("B", "C")
         G.nx.add_edge("C", "A")
+
+    ##
+    #
+    # Results
+    #
+    ##
 
     def aggregate_results(self):
         dynamodb_resource = boto3.resource(
@@ -278,72 +295,11 @@ class GrandIso:
     def print_cli_results(self, argparser_args=None):
         print(self.cli_results(argparser_args))
 
-    def provision(self) -> Tuple[str, str, str]:
-        queue_arn = self.create_queue()
-        lambda_arn = self.create_lambda()
-        table_arn = self.create_table()
-        return (queue_arn, lambda_arn, table_arn)
-
-    def cli_provision(self, argparser_args=None):
-        self.log.debug("Starting the resource provisioning process.")
-        if self.dry:
-            self.log.info("This will provision the following resources:")
-            self.log.info(
-                f" - (IAM) Lambda Execution Role: {self._lambda_execution_role_name}"
-            )
-            self.log.info(f" - (Lambda) Lambda Function:    {function_name_base}")
-            self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
-            self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
-            return
-
-        (queue_arn, lambda_arn, table_arn) = self.provision()
-
-        self.log.debug(f"Created table with ARN [{table_arn}].")
-
-        self.log.debug(f"Attaching lambda [{lambda_arn}] to queue [{queue_arn}].")
-        self.attach_queue_event(queue_arn, lambda_arn)
-        self.log.debug("Completed resource provisioning process.")
-
-    def cli_kickoff(self, argparser_args=None):
-        if self.dry:
-            self.log.info("This will begin the motif search in the graph.")
-            return
-
-        motif = nx.DiGraph()
-        motif.add_edge("A", "B")
-        motif.add_edge("B", "C")
-        motif.add_edge("C", "A")
-        # TODO: construct the motif from disk:
-
-        self.kickoff(motif)
-
-    def kickoff(self, motif_nx: nx.Graph, initial_candidate: dict = None):
-
-        initial_queue_item = json.dumps(
-            {
-                # A version of this motif:
-                "motif": nx.readwrite.node_link_data(motif_nx),
-                # An empty candidate (formerly called "backbone"):
-                "candidate": initial_candidate or {},
-                # An arbitrary ID as PK:
-                # TODO: uuid4
-                "ID": 1,
-            }
-        )
-        # TODO: Do something cleverer than printing this:
-        self.log.debug(self.queue_push(initial_queue_item))
-
-    def attach_queue_event(self, queue_arn, lambda_arn):
-        self.lambda_client.create_event_source_mapping(
-            EventSourceArn=queue_arn,
-            FunctionName=lambda_arn,
-            Enabled=True,
-            BatchSize=1,
-        )
-
-    def queue_push(self, value):
-        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
-        self.sqs_client.send_message(QueueUrl=queue_url, MessageBody=value)
+    ##
+    #
+    # Provisioning
+    #
+    ##
 
     def create_queue(self):
         new_queue_request = self.sqs_client.create_queue(
@@ -356,42 +312,6 @@ class GrandIso:
         self.queue_arn = queue_arn
 
         return queue_arn
-
-    def generate_zip(self):
-        """
-        Construct a zip file from the vendored and nonvendored libraries.
-
-        """
-
-        def zipdir(dpath, zipf):
-            """
-            Zip an entire directory, recursively.
-            """
-            _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
-            for fp in _debug_wrap(
-                glob.glob(os.path.join(dpath, "**/*"), recursive=True)
-            ):
-                base = os.path.commonpath([dpath, fp])
-                zipf.write(fp, arcname=fp.replace(base + "/", ""))
-
-        mem_zip = io.BytesIO()
-
-        # A list of vendor directories:
-        vendor_dirs = ["lambda/vendor"]
-
-        # A list of files to include at root level:
-        files = ["lambda/main.py"]
-
-        with PermissiveZipFile(
-            mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
-            for directory in vendor_dirs:
-                zipdir(directory, zf)
-
-            for file in files:
-                zf.write(file, arcname=file.replace("lambda/", ""))
-
-        return mem_zip.getvalue()
 
     def create_lambda(self):
         """
@@ -436,7 +356,121 @@ class GrandIso:
 
         """
         if not _dynamo_table_exists(self.results_table_name, self.dynamo_client):
-            _create_dynamo_table(self.results_table_name, "ID", self.dynamo_client)
+            return _create_dynamo_table(
+                self.results_table_name, "ID", self.dynamo_client
+            )
+        return False
+
+    def attach_queue_event(self, queue_arn, lambda_arn):
+        self.lambda_client.create_event_source_mapping(
+            EventSourceArn=queue_arn,
+            FunctionName=lambda_arn,
+            Enabled=True,
+            BatchSize=1,
+        )
+
+    def provision(self) -> Tuple[str, str, str]:
+        queue_arn = self.create_queue()
+        lambda_arn = self.create_lambda()
+        table_arn = self.create_table()
+        return (queue_arn, lambda_arn, table_arn)
+
+    def cli_provision(self, argparser_args=None):
+        self.log.debug("Starting the resource provisioning process.")
+        if self.dry:
+            self.log.info("This will provision the following resources:")
+            self.log.info(
+                f" - (IAM) Lambda Execution Role: {self._lambda_execution_role_name}"
+            )
+            self.log.info(f" - (Lambda) Lambda Function:    {function_name_base}")
+            self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
+            self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
+            return
+
+        (queue_arn, lambda_arn, table_arn) = self.provision()
+
+        self.log.debug(f"Created table with ARN [{table_arn}].")
+
+        self.log.debug(f"Attaching lambda [{lambda_arn}] to queue [{queue_arn}].")
+        self.attach_queue_event(queue_arn, lambda_arn)
+        self.log.debug("Completed resource provisioning process.")
+
+    ##
+    #
+    # Kickoff
+    #
+    ##
+
+    def queue_push(self, value):
+        queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
+        self.sqs_client.send_message(QueueUrl=queue_url, MessageBody=value)
+
+    def kickoff(self, motif_nx: nx.Graph, initial_candidate: dict = None):
+
+        initial_queue_item = json.dumps(
+            {
+                # A version of this motif:
+                "motif": nx.readwrite.node_link_data(motif_nx),
+                # An empty candidate (formerly called "backbone"):
+                "candidate": initial_candidate or {},
+                # An arbitrary ID as PK:
+                # TODO: uuid4
+                "ID": 1,
+                # TODO: Add job name
+            }
+        )
+        # TODO: Do something cleverer than printing this:
+        self.log.debug(self.queue_push(initial_queue_item))
+
+    def cli_kickoff(self, argparser_args=None):
+        if self.dry:
+            self.log.info("This will begin the motif search in the graph.")
+            return
+
+        # TODO: construct the motif from disk
+        motif = nx.DiGraph()
+        motif.add_edge("A", "B")
+        motif.add_edge("B", "C")
+        motif.add_edge("C", "A")
+
+        self.kickoff(motif)
+
+    def generate_zip(self):
+        """
+        Construct a zip file from the vendored and nonvendored libraries.
+
+        """
+        # TODO: Move to module top level
+
+        def zipdir(dpath, zipf):
+            """
+            Zip an entire directory, recursively.
+            """
+            _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
+            for fp in _debug_wrap(
+                glob.glob(os.path.join(dpath, "**/*"), recursive=True)
+            ):
+                base = os.path.commonpath([dpath, fp])
+                zipf.write(fp, arcname=fp.replace(base + "/", ""))
+
+        mem_zip = io.BytesIO()
+
+        # A list of vendor directories:
+        vendor_dirs = ["lambda/vendor"]
+
+        # A list of files to include at root level:
+        files = ["lambda/main.py"]
+
+        with PermissiveZipFile(
+            mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED
+        ) as zf:
+            for directory in vendor_dirs:
+                zipdir(directory, zf)
+
+            for file in files:
+                zf.write(file, arcname=file.replace("lambda/", ""))
+
+        return mem_zip.getvalue()
 
 
 def cli_main():
