@@ -179,6 +179,7 @@ class GrandIso:
         self.iam_client = boto3.client("iam", **_aws_kwargs,)
         self.sqs_client = boto3.client("sqs", **_aws_kwargs,)
         self.dynamo_client = boto3.client("dynamodb", **_aws_kwargs,)
+        self.dynamodb_resource = boto3.resource("dynamodb", **_aws_kwargs)
 
         self.results_table_name = "GrandIsoResults"
         self.endpoint_url = endpoint_url
@@ -254,16 +255,6 @@ class GrandIso:
         self._purge_queue()
         return
 
-    def create_host(self):
-        import grand
-        from grand.backends import DynamoDBBackend
-
-        G = grand.Graph(backend=DynamoDBBackend(dynamodb_url=self.endpoint_url))
-
-        G.nx.add_edge("A", "B")
-        G.nx.add_edge("B", "C")
-        G.nx.add_edge("C", "A")
-
     ##
     #
     # Results
@@ -271,13 +262,8 @@ class GrandIso:
     ##
 
     def aggregate_results(self):
-        dynamodb_resource = boto3.resource(
-            "dynamodb",
-            endpoint_url=self.endpoint_url,
-            aws_access_key_id="foo",
-            aws_secret_access_key="foo",
-        )
-        results_table = dynamodb_resource.Table(self.results_table_name)
+
+        results_table = self.dynamodb_resource.Table(self.results_table_name)
         return _scan_table(results_table)
 
     def cli_results(self, argparser_args=None):
@@ -288,7 +274,7 @@ class GrandIso:
         if argparser_args.format == "json":
             return pd.DataFrame(
                 [res["candidate"] for res in self.aggregate_results()]
-            ).to_json()
+            ).T.to_json()
         if argparser_args.format == "raw":
             return self.aggregate_results()
 
