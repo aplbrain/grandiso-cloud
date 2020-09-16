@@ -12,31 +12,26 @@ from grandiso import get_next_backbone_candidates, uniform_node_interestingness
 
 # LOCALSTACK_HOSTNAME = os.getenv("LOCALSTACK_HOSTNAME")
 LOCALSTACK_HOSTNAME = "172.17.0.1"
-# LOCALSTACK_HOSTNAME = "localhost"
 
 ENDPOINT_URL = "http://" + LOCALSTACK_HOSTNAME + ":4566"
 
-sqs_client = boto3.client(
-    "sqs",
+AWS_CONFIG = dict(
     use_ssl=False,
     endpoint_url=ENDPOINT_URL,
     aws_access_key_id="foo",
     aws_secret_access_key="foo",
     region_name="us-east-1",
 )
+
+sqs_client = boto3.client("sqs", **AWS_CONFIG,)
 queue_url = sqs_client.get_queue_url(QueueName="GrandIsoQ")["QueueUrl"]
 
-dynamodb_resource = boto3.resource(
-    "dynamodb",
-    endpoint_url=ENDPOINT_URL,
-    aws_access_key_id="foo",
-    aws_secret_access_key="foo",
-)
+dynamodb_resource = boto3.resource("dynamodb", **AWS_CONFIG,)
 results_table = dynamodb_resource.Table("GrandIsoResults")
 
 
 def find_motifs_step(
-    motif: dict, backbone: dict, host: grand.Graph, interestingness=None
+    motif: dict, backbone: dict, host: grand.Graph, job: str, interestingness=None,
 ):
     motif_nx = nx.readwrite.node_link_graph(motif)
     interestingness = interestingness or uniform_node_interestingness(motif_nx)
@@ -55,19 +50,23 @@ def find_motifs_step(
     for candidate in next_candidate_backbones:
         if len(candidate) == len(motif_nx):
             results_table.put_item(
-                Item={"candidate": candidate, "motif": motif, "ID": str(uuid4())}
+                Item={
+                    "candidate": candidate,
+                    "motif": motif,
+                    "job": job,
+                    "ID": str(uuid4()),
+                }
             )
             # results.append(candidate)
         else:
             sqs_client.send_message(
                 QueueUrl=queue_url,
                 MessageBody=json.dumps(
-                    {"motif": motif, "candidate": candidate, "ID": str(uuid4())}
+                    {"motif": motif, "candidate": candidate, "job": job}
                 ),
             )
             print(candidate)
 
-    print(results)
     return results
 
 
@@ -77,13 +76,8 @@ def main(event, lambda_context):
 
     DG = grand.Graph(backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL))
 
-    print(find_motifs_step(payload["motif"], payload["candidate"], DG.nx))
-
-
-# if __name__ == "__main__":
-#     motif = nx.DiGraph()
-#     motif.add_edge("A", "B")
-#     motif.add_edge("B", "C")
-#     motif.add_edge("C", "A")
-
-#     main({"motif": nx.readwrite.node_link_data(motif), "candidate": {}}, None)
+    print(
+        find_motifs_step(
+            payload["motif"], payload["candidate"], DG.nx, job=payload["job"]
+        )
+    )

@@ -25,7 +25,7 @@ I recommend saving this configuration in `~/.aws/credentials` and then referenci
 
 ## Installing Dependencies
 
-In order to use tis package, you will need the packages listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
+In order to use this package, you will need the libraries listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
 
 ```shell
 pip install -r requirements.txt
@@ -80,7 +80,7 @@ If you are using localstack, you should specify all endpoint URLs in the steps b
 You are now ready to begin using this package. All of the following commands can be run with `--dry` or `--dry=true` to prevent them from affecting your AWS account:
 
 ```shell
-./grandiso --dry=true --job-name "Example" provision
+./grandiso --dry=true --job "Example" provision
 ```
 
 Start by provisioning your resources:
@@ -90,7 +90,7 @@ Start by provisioning your resources:
 Come up with a cute name for your job:
 
 ```shell
-./grandiso --job-name MyCoolJob provision --graph-name MyBigGraph
+./grandiso provision --graph-name MyBigGraph
 ```
 
 This will do two things:
@@ -101,7 +101,7 @@ This will do two things:
 ## Kick off the job
 
 ```shell
-./grandiso --job-name MyCoolJob kickoff --motif mymotif.motif
+./grandiso kickoff --job MyCoolJob --motif mymotif.motif
 ```
 
 ## Get the results
@@ -111,5 +111,5 @@ Note that you can request results right away, but the job may not be finished ye
 Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
 
 ```shell
-./grandiso --job-name MyCoolJob results --format csv > myresults.csv
+./grandiso results --job MyCoolJob --format csv > myresults.csv
 ```
