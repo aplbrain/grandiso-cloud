@@ -1,3 +1,4 @@
 boto3==1.14.38
-flask
-zappa==0.51.0
+networkx
+tqdm
+click

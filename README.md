@@ -77,14 +77,20 @@ If you are using localstack, you should specify all endpoint URLs in the steps b
 
 # Usage
 
-You are now ready to begin using this package. Start by provisioning your resources:
+You are now ready to begin using this package. All of the following commands can be run with `--dry` or `--dry=true` to prevent them from affecting your AWS account:
+
+```shell
+./grandiso --dry=true --job-name "Example" provision
+```
+
+Start by provisioning your resources:
 
 ## Provision resources for the first time
 
 Come up with a cute name for your job:
 
 ```shell
-./grandiso provision --job-name MyCoolJob --graph-name MyBigGraph
+./grandiso --job-name MyCoolJob provision --graph-name MyBigGraph
 ```
 
 This will do two things:
@@ -95,7 +101,7 @@ This will do two things:
 ## Kick off the job
 
 ```shell
-./grandiso kickoff --job-name MyCoolJob --motif-file mymotif.motif
+./grandiso --job-name MyCoolJob kickoff --motif mymotif.motif
 ```
 
 ## Get the results
@@ -105,5 +111,5 @@ Note that you can request results right away, but the job may not be finished ye
 Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
 
 ```shell
-./grandiso results --job-name MyCoolJob --format csv > myresults.csv
+./grandiso --job-name MyCoolJob results --format csv > myresults.csv
 ```
