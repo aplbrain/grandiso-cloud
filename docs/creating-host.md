@@ -6,9 +6,11 @@ If you already have a host graph available (uploaded with `Grand`), you can skip
 import grand
 from grand.backends import DynamoDBBackend
 
-G = grand.Graph(backend=DynamoDBBackend(dynamodb_url=self.endpoint_url))
+G = grand.Graph(backend=DynamoDBBackend(dynamodb_url="http://localhost:4566"), directed=True)
 
 G.nx.add_edge("A", "B")
 G.nx.add_edge("B", "C")
 G.nx.add_edge("C", "A")
+G.nx.add_edge("A", "D")
+G.nx.add_edge("D", "C")
 ```

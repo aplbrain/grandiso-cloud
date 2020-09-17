@@ -62,7 +62,12 @@ def find_motifs_step(
             sqs_client.send_message(
                 QueueUrl=queue_url,
                 MessageBody=json.dumps(
-                    {"motif": motif, "candidate": candidate, "job": job}
+                    {
+                        "motif": motif,
+                        "candidate": candidate,
+                        "job": job,
+                        "directed": directed,
+                    }
                 ),
             )
             print(candidate)
@@ -74,7 +79,10 @@ def main(event, lambda_context):
 
     payload = json.loads(event["Records"][0]["body"])
 
-    DG = grand.Graph(backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL))
+    DG = grand.Graph(
+        backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL),
+        directed=payload["directed"] in [True, "true", "True"],
+    )
 
     print(
         find_motifs_step(
