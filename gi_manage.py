@@ -85,14 +85,15 @@ def _generate_zip():
     Construct a zip file from the vendored and nonvendored libraries.
 
     """
-    # TODO: Move to module top level
 
     def zipdir(dpath, zipf):
         """
         Zip an entire directory, recursively.
         """
         _debug_wrap = tqdm.tqdm if DEBUG else lambda x: x
-        for fp in _debug_wrap(glob.glob(os.path.join(dpath, "**/*"), recursive=True)):
+        for fp in _debug_wrap(
+            glob.glob(os.path.join(dpath, "**/*"), recursive=True),
+        ):
             base = os.path.commonpath([dpath, fp])
             zipf.write(fp, arcname=fp.replace(base + "/", ""))
 
@@ -104,7 +105,11 @@ def _generate_zip():
     # A list of files to include at root level:
     files = ["lambda/main.py"]
 
-    with PermissiveZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with PermissiveZipFile(
+        mem_zip,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as zf:
         for directory in vendor_dirs:
             zipdir(directory, zf)
 
@@ -189,7 +194,9 @@ def _create_dynamo_table(
             # Partition/hash key
             {"AttributeName": primary_key, "KeyType": "HASH"},
         ],
-        AttributeDefinitions=[{"AttributeName": primary_key, "AttributeType": "S"},],
+        AttributeDefinitions=[
+            {"AttributeName": primary_key, "AttributeType": "S"},
+        ],
         # Currently do not support billing methods besides on-demand.
         BillingMode="PAY_PER_REQUEST",
     )
@@ -249,10 +256,10 @@ class GrandIso:
             _aws_kwargs["endpoint_url"] = endpoint_url
 
         self.dry = dry
-        self.lambda_client = boto3.client("lambda", **_aws_kwargs,)
-        self.iam_client = boto3.client("iam", **_aws_kwargs,)
-        self.sqs_client = boto3.client("sqs", **_aws_kwargs,)
-        self.dynamo_client = boto3.client("dynamodb", **_aws_kwargs,)
+        self.lambda_client = boto3.client("lambda", **_aws_kwargs)
+        self.iam_client = boto3.client("iam", **_aws_kwargs)
+        self.sqs_client = boto3.client("sqs", **_aws_kwargs)
+        self.dynamo_client = boto3.client("dynamodb", **_aws_kwargs)
         self.dynamodb_resource = boto3.resource("dynamodb", **_aws_kwargs)
 
         self.results_table_name = "GrandIsoResults"
@@ -365,7 +372,7 @@ class GrandIso:
     #
     ##
 
-    def create_queue(self):
+    def create_queue(self) -> str:
         new_queue_request = self.sqs_client.create_queue(
             QueueName=queue_name_base, Attributes={"FifoQueue": "false"}
         )
@@ -377,7 +384,7 @@ class GrandIso:
 
         return queue_arn
 
-    def create_lambda(self):
+    def create_lambda(self) -> str:
         """
         Create a lambda for GrandIso in general.
 
@@ -414,7 +421,7 @@ class GrandIso:
             lambda_arn = lambda_function["FunctionArn"]
         return lambda_arn
 
-    def create_table(self):
+    def create_table(self) -> str:
         """
         Create a DynamoDB table to hold the results from this job.
 
@@ -566,7 +573,7 @@ def cli_main():
             + "contains a .motif definition in the DotMotif DSL. Note that "
             + "only structural (edges and nodes) and attribute information "
             + "(a.weight == 5) will be searched; attribute comparator "
-            + "information (a.weight > 5) will be omitted.",
+            + "information (a.weight > 5) will be omitted."
         ),
     )
     kickoff_command.add_argument(

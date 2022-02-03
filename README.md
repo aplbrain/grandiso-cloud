@@ -80,7 +80,7 @@ If you are using localstack, you should specify all endpoint URLs in the steps b
 You are now ready to begin using this package. All of the following commands can be run with `--dry` or `--dry=true` to prevent them from affecting your AWS account:
 
 ```shell
-./grandiso --dry=true --job "Example" provision
+./gi_manage.py --dry=true --job "Example" provision
 ```
 
 Start by provisioning your resources:
@@ -90,7 +90,7 @@ Start by provisioning your resources:
 Come up with a cute name for your job:
 
 ```shell
-./grandiso provision --graph-name MyBigGraph
+./gi_manage.py provision --graph-name MyBigGraph
 ```
 
 This will do two things:
@@ -101,7 +101,7 @@ This will do two things:
 ## Kick off the job
 
 ```shell
-./grandiso kickoff --job MyCoolJob --motif mymotif.motif
+./gi_manage.py kickoff --job MyCoolJob --motif mymotif.motif
 ```
 
 ## Get the results
@@ -111,5 +111,5 @@ Note that you can request results right away, but the job may not be finished ye
 Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
 
 ```shell
-./grandiso results --job MyCoolJob --format csv > myresults.csv
+./gi_manage.py results --job MyCoolJob --format csv > myresults.csv
 ```
