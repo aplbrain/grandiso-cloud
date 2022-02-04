@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 # Type imports:
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 # Standard library imports:
 import argparse
@@ -10,9 +10,7 @@ import io
 import json
 import logging
 import os
-import sys
 import time
-from uuid import uuid4
 import zipfile
 from zipfile import ZipFile, ZipInfo
 
@@ -25,14 +23,21 @@ import tqdm
 
 # Note that for certain commands, you will also need to install Grand/GrandIso.
 
+# Global configuration parameters:
+
+# Whether to perform extra-verbose outputs. Useful for debugging during the
+# development of this library, not super important for everyday usage.
 DEBUG = True
 
 logging.basicConfig(level=logging.INFO)
 
-
+# The prefix for AWS resources. This is helpful to keep track of all GI-Cloud
+# resources if Teardown commands fail.
 queue_name_base = "GrandIsoQ"
 function_name_base = "GrandIsoLambda"
 
+# The IAM role for the Lambda to assume. A more restrictive version than is
+# commonly used for things like Zappa.
 ASSUME_POLICY = """{
   "Version": "2012-10-17",
   "Statement": [
@@ -64,9 +69,9 @@ class PermissiveZipFile(ZipFile):
 
     def writestr(self, zinfo_or_arcname, data, compress_type=None):
         if not isinstance(zinfo_or_arcname, ZipInfo):
-            zinfo = ZipInfo(
-                filename=zinfo_or_arcname, date_time=time.localtime(time.time())[:6]
-            )
+            # Save-time is Tuple[int]: (YYYY, M, D, H, m, s)
+            date_time = time.localtime(time.time())[:6]
+            zinfo = ZipInfo(filename=zinfo_or_arcname, date_time=date_time)
 
             zinfo.compress_type = self.compression
             if zinfo.filename[-1] == "/":
@@ -80,7 +85,7 @@ class PermissiveZipFile(ZipFile):
         super(PermissiveZipFile, self).writestr(zinfo, data, compress_type)
 
 
-def _generate_zip():
+def _generate_zip(vendor_directories: list = None, include_files: list = None):
     """
     Construct a zip file from the vendored and nonvendored libraries.
 
@@ -100,10 +105,10 @@ def _generate_zip():
     mem_zip = io.BytesIO()
 
     # A list of vendor directories:
-    vendor_dirs = ["lambda/vendor"]
+    vendor_dirs = vendor_directories or ["lambda/vendor"]
 
     # A list of files to include at root level:
-    files = ["lambda/main.py"]
+    files = include_files or ["lambda/main.py"]
 
     with PermissiveZipFile(
         mem_zip,
@@ -126,25 +131,62 @@ class Motif:
 
     def __init__(self, graph: nx.Graph) -> None:
         """
-        Create a new Motif from a file.
+        Create a new Motif from a file, graph, or other structure.
+
+        Arguments:
+            graph (nx.Graph): A source graph to turn into a motif (using the
+                DotMotif library)
+
         """
         self.graph = graph
 
     @staticmethod
     def from_file(filename: str, directed: bool = True) -> "Motif":
+        """
+        Create a new Motif object from a .motif file or .csv file.
+
+        Arguments:
+            filename (str): The file path to read
+            directed (bool = True): If the file details a directed (True) or
+                undirected (False) motif
+
+        Returns:
+            Motif
+
+        """
         if filename.endswith(".motif"):
             return Motif.from_motif(filename, directed)
         return Motif.from_edgelist(filename, directed)
 
     @staticmethod
     def from_motif(filename: str, directed: bool = True) -> "Motif":
+        """
+        Create a new Motif object from a .motif file.
+
+        Arguments:
+            filename (str): The file path to read
+            directed (bool = True): If the file details a directed (True) or
+                undirected (False) motif
+
+        Returns:
+            Motif
+
+        """
         raise NotImplementedError()
         # return Motif()
 
     @staticmethod
     def from_edgelist(filename: str, directed: bool = True) -> "Motif":
         """
-        Render to a networkx.Graph.
+        Render a .csv file to a networkx.Graph.
+
+        Arguments:
+            filename (str): The file path to read
+            directed (bool = True): If the file details a directed (True) or
+                undirected (False) motif
+
+        Returns:
+            Motif
 
         """
         return Motif(
@@ -154,12 +196,32 @@ class Motif:
         )
 
     def to_nx(self) -> nx.Graph:
+        """
+        Export the Motif object to its underlying networkx.Graph.
+
+        Arguments:
+            None
+
+        Returns:
+            nx.Graph: The graph representation of the motif.
+
+        """
         return self.graph
 
 
-def _scan_table(table, scan_kwargs: dict = None):
+def _scan_table(table: boto3.Resource, scan_kwargs: dict = None):
     """
     DynamoDB convenience function to scan all results from a table.
+
+    Arguments:
+        table (boto3.Resource): The boto3 DynamoDB Table object to use for
+            database operations
+        scan_kwargs (dict = None): Arbitrary additional keyword arguments to
+            pass to the Table#scan operation
+
+    Returns:
+        List
+
     """
     done = False
     start_key = None
@@ -182,7 +244,19 @@ def _create_dynamo_table(
     read_write_units: Optional[int] = None,
 ):
     """
-    DynamoDB convenience function to create a new DynamoDB table.
+    Convenience function to create a new DynamoDB table.
+
+    Arguments:
+        table_name (str): The name of the table to create
+        primary_key (str): The name of the primary key for the new table. This
+            is the DynamoDB "hash" key.
+        client (boto3.client): The boto3 DynamoDB client
+        read_write_units (int = None): The read/write units to provision for
+            the new table. If set to None, the default behavior to to charge
+            per-request.
+
+    Returns:
+        boto3.Resource: The boto3 DynamoDB table object
 
     """
     if read_write_units is not None:
@@ -205,6 +279,10 @@ def _create_dynamo_table(
 def _dynamo_table_exists(table_name: str, client: boto3.client):
     """
     DynamoDB convenience function to check if a DynamoDB table already exists.
+
+    Arguments:
+        table_name (str): The name of the table to check
+        client (boto3.client): The boto3 DynamoDB client
 
     Returns:
         bool: Whether table exists
@@ -296,6 +374,12 @@ class GrandIso:
         teardown function, and instead you should remove the resources specific
         to your job.
 
+        Arguments:
+            None
+
+        Returns:
+            None
+
         """
         self._teardown_queue()
         self._teardown_lambda()
@@ -334,6 +418,18 @@ class GrandIso:
         self.sqs_client.purge_queue(QueueUrl=queue_url)
 
     def cancel(self):
+        """
+        Cancel all GrandIso jobs in this account.
+
+        This will cancel the jobs but not delete the AWS resources.
+
+        Arguments:
+            None
+
+        Returns:
+            None
+
+        """
         self._purge_queue()
         return
 
@@ -343,12 +439,28 @@ class GrandIso:
     #
     ##
 
-    def aggregate_results(self, job: str):
+    def aggregate_results(self, job: str) -> Iterable:
+        """
+        Get the results of a GrandIso job.
+
+        Arguments:
+            job (str): The job to get results for
+
+        Returns:
+            Iterable: The results of the job
+
+        """
 
         results_table = self.dynamodb_resource.Table(self.results_table_name)
         return _scan_table(results_table, {"FilterExpression": Key("job").eq(job)})
 
     def cli_results(self, argparser_args=None):
+        """
+        Run the results command from the command-line.
+
+        See GrandIso#aggregate_results.
+
+        """
         if not argparser_args.job:
             raise ValueError("Job must be specified.")
         job_name = argparser_args.job
@@ -364,6 +476,12 @@ class GrandIso:
             return self.aggregate_results(job_name)
 
     def print_cli_results(self, argparser_args=None):
+        """
+        Run the results command from the command-line, and print the results.
+
+        See GrandIso#cli_results.
+
+        """
         print(self.cli_results(argparser_args))
 
     ##
@@ -373,6 +491,16 @@ class GrandIso:
     ##
 
     def create_queue(self) -> str:
+        """
+        Create a new SQS Queue.
+
+        Arguments:
+            None
+
+        Returns:
+            str: The ARN URI of the new queue
+
+        """
         new_queue_request = self.sqs_client.create_queue(
             QueueName=queue_name_base, Attributes={"FifoQueue": "false"}
         )
@@ -390,6 +518,12 @@ class GrandIso:
 
         Note that this is not specific to a job, and so it is not prefixed with
         namespacing variables.
+
+        Arguments:
+            None
+
+        Returns:
+            str: The ARN URI of the new lambda
 
         """
         # First, create a lambda execution role in IAM.
@@ -415,15 +549,24 @@ class GrandIso:
                 Runtime="python3.8",
                 Role=role_arn,
                 Handler="main.main",
+                # Note that you can optionally pass `vendor_directory` and
+                # `include_files` arguments to _generate_zip in order to curate
+                # which files are included in the zipfile.
                 Code={"ZipFile": _generate_zip()},
             )
-            # print(lambda_function)
             lambda_arn = lambda_function["FunctionArn"]
         return lambda_arn
 
-    def create_table(self) -> str:
+    def create_table(self) -> Union[str, bool]:
         """
         Create a DynamoDB table to hold the results from this job.
+
+        Arguments:
+            None
+
+        Returns:
+            str: The ARN URI of the new table, or False if the table already
+                exists and does not need to be created.
 
         """
         if not _dynamo_table_exists(self.results_table_name, self.dynamo_client):
@@ -432,7 +575,18 @@ class GrandIso:
             )
         return False
 
-    def attach_queue_event(self, queue_arn, lambda_arn):
+    def attach_queue_event(self, queue_arn: str, lambda_arn: str):
+        """
+        Attach the SQS new-item event handler to the lambda.
+
+        Arguments:
+            queue_arn (str): The ARN of the SQS queue
+            lambda_arn (str): The ARN of the Lambda function
+
+        Returns:
+            None
+
+        """
         self.lambda_client.create_event_source_mapping(
             EventSourceArn=queue_arn,
             FunctionName=lambda_arn,
@@ -441,12 +595,29 @@ class GrandIso:
         )
 
     def provision(self) -> Tuple[str, str, str]:
+        """
+        Create the queue, lambda, and table for Grand Iso cloud jobs.
+
+        Arguments:
+            None
+
+        Returns:
+            Tuple[str, str, str]: The ARN of the queue, the ARN of the lambda,
+                and the ARN of the table (in that order).
+
+        """
         queue_arn = self.create_queue()
         lambda_arn = self.create_lambda()
         table_arn = self.create_table()
         return (queue_arn, lambda_arn, table_arn)
 
     def cli_provision(self, argparser_args=None):
+        """
+        Run the provision command from the command-line.
+
+        See GrandIso#provision.
+
+        """
         self.log.debug("Starting the resource provisioning process.")
         if self.dry:
             self.log.info("This will provision the following resources:")
@@ -472,7 +643,17 @@ class GrandIso:
     #
     ##
 
-    def queue_push(self, value):
+    def queue_push(self, value: str):
+        """
+        Push a new item to the queue.
+
+        Arguments:
+            value (str): The value to push to the queue.
+
+        Returns:
+            None
+
+        """
         queue_url = self.sqs_client.get_queue_url(QueueName=queue_name_base)["QueueUrl"]
         self.sqs_client.send_message(QueueUrl=queue_url, MessageBody=value)
 
@@ -483,7 +664,19 @@ class GrandIso:
         directed: bool = True,
         initial_candidate: dict = None,
     ):
+        """
+        Kick off a new job.
 
+        Arguments:
+            motif_nx (nx.Graph): The motif to search for.
+            job_name (str): The name of the job.
+            directed (bool): Whether the motif is directed.
+            initial_candidate (dict): The initial candidate to start the search
+
+        Returns:
+            None
+
+        """
         initial_queue_item = json.dumps(
             {
                 # A version of this motif:
@@ -501,6 +694,12 @@ class GrandIso:
         self.log.debug(self.queue_push(initial_queue_item))
 
     def cli_kickoff(self, argparser_args=None):
+        """
+        Kick off a new job from the command-line.
+
+        See GrandIso#kickoff.
+
+        """
         if not argparser_args.job:
             raise ValueError(
                 "You must provide a job name. From the command-line, you can specify one with --job."
@@ -525,6 +724,16 @@ class GrandIso:
 
 
 def cli_main():
+    """
+    Run the command-line interface.
+
+    Arguments:
+        None
+
+    Returns:
+        None
+
+    """
     parser = argparse.ArgumentParser(
         description="GrandIso subgraph isomorphism in the cloud"
     )
