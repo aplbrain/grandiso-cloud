@@ -575,7 +575,7 @@ class GrandIso:
             )
         return False
 
-    def attach_queue_event(self, queue_arn: str, lambda_arn: str):
+    def attach_queue_event(self, queue_arn: str, lambda_arn: str, batch_size: int = 1):
         """
         Attach the SQS new-item event handler to the lambda.
 
@@ -591,7 +591,7 @@ class GrandIso:
             EventSourceArn=queue_arn,
             FunctionName=lambda_arn,
             Enabled=True,
-            BatchSize=1,
+            BatchSize=batch_size,
         )
 
     def provision(self) -> Tuple[str, str, str]:
@@ -618,6 +618,7 @@ class GrandIso:
         See GrandIso#provision.
 
         """
+        batch_size = int(argparser_args.get("batch_size", 1))
         self.log.debug("Starting the resource provisioning process.")
         if self.dry:
             self.log.info("This will provision the following resources:")
@@ -627,6 +628,7 @@ class GrandIso:
             self.log.info(f" - (Lambda) Lambda Function:    {function_name_base}")
             self.log.info(f" - (SQS) Queue:                 {queue_name_base}")
             self.log.info(f" - (DynamoDB) Table:            {self.results_table_name}")
+            self.log.info(f" - SQS Event Trigger Batch:     {batch_size}")
             return
 
         (queue_arn, lambda_arn, table_arn) = self.provision()
@@ -634,7 +636,7 @@ class GrandIso:
         self.log.debug(f"Created table with ARN [{table_arn}].")
 
         self.log.debug(f"Attaching lambda [{lambda_arn}] to queue [{queue_arn}].")
-        self.attach_queue_event(queue_arn, lambda_arn)
+        self.attach_queue_event(queue_arn, lambda_arn, batch_size=batch_size)
         self.log.debug("Completed resource provisioning process.")
 
     ##
@@ -760,6 +762,13 @@ def cli_main():
     # Provision
     provision_command = subparsers.add_parser(
         "provision", help="Provision resources for GrandIso."
+    )
+    provision_command.add_argument(
+        "--batch-size",
+        type=int,
+        required=False,
+        default=1,
+        help="The batch size for the SQS event trigger.",
     )
     provision_command.set_defaults(func=grandiso.cli_provision)
 

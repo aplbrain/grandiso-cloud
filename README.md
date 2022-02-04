@@ -87,10 +87,12 @@ Start by provisioning your resources:
 
 ## Provision resources for the first time
 
-Come up with a cute name for your job:
+You can choose the batch-size (how many elements are popped from the queue to be run in series in the worker lambda). This should be a small number (perhaps even 1) if the graph is particularly large, to guarantee that the Lambda completes without timing out. If the graph is small, or the motif is very sparse, you can set this to a large number (e.g. 20).
+
+If a batch size is not provided, `gi_manage.py` will default to a batch-size of 1.
 
 ```shell
-./gi_manage.py provision --graph-name MyBigGraph
+./gi_manage.py provision --batch_size=10
 ```
 
 This will do two things:
