@@ -209,7 +209,7 @@ class Motif:
         return self.graph
 
 
-def _scan_table(table: boto3.Resource, scan_kwargs: dict = None):
+def _scan_table(table: "Table", scan_kwargs: dict = None):
     """
     DynamoDB convenience function to scan all results from a table.
 
@@ -747,11 +747,21 @@ def cli_main():
         type=bool,
         required=False,
         default=False,
-        help="Whether to dry-run (instead of actually running)",
+        help="Whether to dry-run (instead of actually running). If enabled, no AWS resources will be provisioned, changed, or deleted.",
     )
 
+    parser.add_argument(
+        "--endpoint-url",
+        type=str,
+        required=False,
+        default=None,
+        help="The endpoint URL of the AWS service to use. If not specified, the default endpoint for the service will be used. This is mostly useful when using localstack for testing.",
+    )
+
+    args = parser.parse_args()
+
     grandiso = GrandIso(
-        endpoint_url="http://localhost:4566",
+        endpoint_url=args.endpoint_url,
         aws_access_key_id="grandiso",
         aws_secret_access_key="grandiso",
         dry=True,
