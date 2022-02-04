@@ -83,6 +83,13 @@ You are now ready to begin using this package. All of the following commands can
 ./gi_manage.py --dry=true --job "Example" provision
 ```
 
+## Global Flags
+
+| Flag             | Description                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `--dry`          | If true, the command will not actually run, but will show the commands that would have been run. |
+| `--endpoint-url` | The endpoint URL to use for the AWS API.                                                         |
+
 Start by provisioning your resources:
 
 ## Provision resources for the first time
