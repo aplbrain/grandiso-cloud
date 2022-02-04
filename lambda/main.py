@@ -23,15 +23,19 @@ AWS_CONFIG = dict(
     region_name="us-east-1",
 )
 
-sqs_client = boto3.client("sqs", **AWS_CONFIG,)
+sqs_client = boto3.client("sqs", **AWS_CONFIG)
 queue_url = sqs_client.get_queue_url(QueueName="GrandIsoQ")["QueueUrl"]
 
-dynamodb_resource = boto3.resource("dynamodb", **AWS_CONFIG,)
+dynamodb_resource = boto3.resource("dynamodb", **AWS_CONFIG)
 results_table = dynamodb_resource.Table("GrandIsoResults")
 
 
 def find_motifs_step(
-    motif: dict, backbone: dict, host: grand.Graph, job: str, interestingness=None,
+    motif: dict,
+    backbone: dict,
+    host: grand.Graph,
+    job: str,
+    interestingness=None,
 ):
     motif_nx = nx.readwrite.node_link_graph(motif)
     interestingness = interestingness or uniform_node_interestingness(motif_nx)
@@ -57,7 +61,6 @@ def find_motifs_step(
                     "ID": str(uuid4()),
                 }
             )
-            # results.append(candidate)
         else:
             sqs_client.send_message(
                 QueueUrl=queue_url,
@@ -70,22 +73,20 @@ def find_motifs_step(
                     }
                 ),
             )
-            print(candidate)
 
     return results
 
 
 def main(event, lambda_context):
 
-    payload = json.loads(event["Records"][0]["body"])
+    for record in event["Records"]:
+        payload = json.loads(record["body"])
 
-    DG = grand.Graph(
-        backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL),
-        directed=payload["directed"] in [True, "true", "True"],
-    )
+        DG = grand.Graph(
+            backend=DynamoDBBackend(dynamodb_url=ENDPOINT_URL),
+            directed=payload["directed"] in [True, "true", "True"],
+        )
 
-    print(
         find_motifs_step(
             payload["motif"], payload["candidate"], DG.nx, job=payload["job"]
         )
-    )

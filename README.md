@@ -113,3 +113,5 @@ Note that this performs a seriaized `DynamoDB#scan` operation, which is costly o
 ```shell
 ./gi_manage.py results --job MyCoolJob --format csv > myresults.csv
 ```
+
+Complete reference documentation for the `gi_manage.py` file exists in [docs/reference.md](docs/reference.md).
