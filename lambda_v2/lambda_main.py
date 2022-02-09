@@ -14,14 +14,16 @@ All functions take as their first parameter a job_id
 
 """
 
-from typing import Callable
+from typing import Any, Callable
 
 import boto3
 from grandiso import get_next_backbone_candidates, uniform_node_interestingness
 import networkx as nx
 from configuration import configuration
 
+
 ResultHandlerFunction = Callable[[str, dict], bool]
+CandidateEnqueuerFunction = Callable[[str, dict, dict], Any]
 
 
 config = configuration()
@@ -56,6 +58,23 @@ def save_result_to_dynamo(job_id: str, result_payload: dict) -> bool:
     except Exception as e:
         print(f"Error saving result to dynamo: {e}")
         return False
+
+
+def ptq_candidate_enqueuer(job_id: str, candidate: dict, ptq_kwargs: dict) -> bool:
+    """
+    Enqueue a candidate into a PTQ queue.
+
+    Arguments:
+        job_id (str): The job ID of the current result, to associate it with a
+            grand iso cloud job.
+        candidate (dict): The candidate to enqueue.
+        ptq_kwargs (dict): Must include "uri" which refers to the PTQ queue URI
+
+    Returns:
+        bool: True if the candidate was enqueued successfully, False otherwise.
+
+    """
+    raise NotImplementedError()
 
 
 def process_one_partial_candidate_from_queue(
