@@ -31,8 +31,26 @@ interestingness = uniform_node_interestingness(MOTIF)
 @queueable
 def get_next_backbone_candidates_and_enqueue(
     job_id: str, queue_uri: str, candidate: dict, host_grand_uri: str
-):
+) -> None:
+    """
+    Perform a single iteration of the algorithm.
 
+    Retrieves a job from the queue, expands upon it using GrandIso, and then
+    enqueues the resulting candidates.
+
+    Arguments:
+        job_id (str): The job ID of the job to expand upon.
+        queue_uri (str): The URI of the queue to use. See ptq for more details.
+        candidate (dict): The candidate to expand upon. (As an end-user, you
+            will not have to interact with this directly.) To start a new run,
+            pass an empty dict.
+        host_grand_uri (str): The URI of the host graph to use (see grand docs
+            for more details).
+
+    Returns:
+        None
+
+    """
     host = grand.Graph(
         backend=SQLBackend(db_url=host_grand_uri, directed=True),
         directed=True,
@@ -43,10 +61,10 @@ def get_next_backbone_candidates_and_enqueue(
     next_candidates = get_next_backbone_candidates(
         candidate, MOTIF, host, interestingness=interestingness, directed=False
     )
-    print(next_candidates)
     for c in next_candidates:
         if len(c.keys()) == len(MOTIF.nodes()):
-            print(c)
+            # TODO: Handle complete records
+            pass
         else:
             q.insert(
                 [
@@ -61,13 +79,61 @@ def get_next_backbone_candidates_and_enqueue(
             )
 
 
-def initialize(job_id: str, queue_uri: str, host_grand_uri: str):
+def initialize(job_id: str, queue_uri: str, host_grand_uri: str) -> None:
+    """
+    Initialize a new GrandIsoCloud job.
+
+    Arguments:
+        job_id (str): The job ID to create. Will not be checked for uniqueness.
+        queue_uri (str): The URI of the queue to use. See ptq for more details.
+        host_grand_uri (str): The URI of the host graph to use (see grand docs
+            for more details).
+
+    Returns:
+        None
+
+    """
     get_next_backbone_candidates_and_enqueue(job_id, queue_uri, {}, host_grand_uri)
 
 
-def run(job_id: str, queue_uri: str):
+def run(
+    job_id: str,
+    queue_uri: str,
+    verbose: bool = False,
+    lease_seconds: int = None,
+    tally: bool = False,
+) -> None:
+    """
+    Run a GrandIsoCloud job.
+
+    Attaches to an existing work queue. ALL jobs in the queue will be processed
+    by this worker, so if you have multiple jobs with different host graphs,
+    make sure they are all available and visible to each worker. (Otherwise,
+    use different queue URIs for each host graph.)
+
+    If you have multiple workers, you can use the same queue URI for each.
+
+    Arguments:
+        job_id (str): The job ID to run.
+        queue_uri (str): The URI of the queue to use. See ptq for more details.
+        verbose (bool): Whether to print progress information.
+        lease_seconds (int): The number of seconds to wait for a job before
+            timing out.
+        tally (bool): Whether to keep a tally of the number of jobs processed.
+
+    Returns:
+        None
+
+    """
     Q = TaskQueue(queue_uri)
-    Q.poll(verbose=True)
+    if lease_seconds:
+        Q.poll(
+            verbose=verbose,
+            tally=tally,
+            lease_seconds=lease_seconds,
+        )
+    else:
+        Q.poll(verbose=verbose, tally=tally)
 
 
 if __name__ == "__main__":
