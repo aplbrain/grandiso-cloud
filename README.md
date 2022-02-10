@@ -1,126 +1,58 @@
-# Grand Isomorphisms
+# GrandIso Cloud
 
-Grand is a virtual graph database. Because DynamoDB is a true-serverless database, it makes sense to use serverless scalable technologies to run graph queries against Grand.
+This is a cloud-queue implementation of the [GrandIso](https://github.com/aplbrain/grandiso-networkx) library for motif search at cloud-scale.
 
-In particular, subgraph isomorphism is a resource-heavy (but branch-parallelizable) algorithm that is hugely impactful for large graph analysis. SotA algorithms for this (Ullmann, VF2, BB-Graph) are heavily RAM-bound, but this is due to a large number of small processes each of which hold a small portion of a traversal tree in memory.
+## Motivation
 
-_Grand-Iso_ is a subgraph isomorphism algorithm that leverages serverless technology to run in the AWS cloud at infinite scale.\*
+Subgraph monomorphism, the underlying algorithm behind motif search, is memory-hungry, and most state of the art implementations may require the allocation of many terabytes of RAM even for relatively small host graphs (thousands to tens-of-thousands of edges). The GrandIso algorithm isolates this memory cost in a single, one-dimensional queue data structure. In the original GrandIso tool (written for the [NetworkX](https://github.com/networkx/networkx) Python library), the queue resides in memory. This makes it extremely fast, but it also means that the total size of the motif search task is limited by the RAM of the machine. This is a particular issue for modern large-scale graph analysis questions, where the host graphs may exceed hundreds of millions of edges. Such a graph would exceed the memory- and time-budgets of most institutions. Thus, there are two main limitations to consider: (1) The size of the raw graph data may exceed what can be stored on a single machine; (2) The RAM requirements of the queue may exceed the RAM of the machine.
 
-> <small>\* You may discover that "infinite" here is predominantly bounded by your wallet, which is no joke.</small>
+### Solutions for Large-Scale Graphs
 
-For an overview of the algorithm and cloud architecture at work here, see [docs/algorithm.md](docs/algorithm.md).
+This implementation uses [Grand](https://github.com/aplbrain/grand), a Python library that serves a NetworkX-like API in front of graph data stored in SQL, DynamoDB, Neo4j, or other database technologies. This enables a user to operate on larger-than-RAM graphs while writing familiar and readable code. In other words, a user never needs to learn graph database APIs or query optimizations, and can still manipulate million-edge graph data efficiently.
 
-# Preparation
+### Solutions for Out-of-Memory Queue Management
 
-## Prerequisites
+This cloud implementation outsources queue management to a dropout-resilient queue system like [AWS SQS](https://aws.amazon.com/sqs/). This has three main advantages: First, it removes local RAM from the equation; the queue can scale exponentially on the remote cloud host without impacting local performance. Second, it enables multiple parallel workers — on the same machine or on multiple machines — to work cooperatively on the same graph. And finally, such a queue adds a layer of resilience to drop-out or node death, which enables the user to recruit much larger clusters of unsupervised worker nodes.
 
-You should confirm that you have set `AWS_DEFAULT_REGION` somewhere. `us-east-1` is recommended. You will also need an IAM user (or user account) with access to the following services:
+## Considerations
 
--   DynamoDB
--   IAM
--   Lambda
--   SQS
+This performant software greatly reduces the total wall-clock time to perform motif searches on large graphs. Do note, however, that this is due to the use of cloud data hosting and massive parallelization. Both of these aspects have nontrivial costs associated with them, and it is recommended that users use this software with caution and budget-awareness. (It is NOT difficult to accidentally spawn a cost-prohibitive motif search using this infrastructure!)
 
-I recommend saving this configuration in `~/.aws/credentials` and then referencing with the `AWS_PROFILE` environment variables, though you can pass credentials directly (or as environment variables) as well.
+It is recommended that users of this system perform some small benchmarking searches prior to launching full-scale motif searches.
 
-## Installing Dependencies
+## Usage
 
-In order to use this package, you will need the libraries listed in `requirements.txt`. You can either install them manually, or you can install them from the `requirements.txt` in this directory:
+Many jobs may be spawned simultaneously. Each job, whether or not running in isolation, must be assigned a unique **job ID**. This job ID is used to identify the job in the queue, and is also used to identify the job's output. (Reusing a job ID is legal, but may corrupt your results or make them uninterpretable. This software will not stop you from doing this.)
 
-```shell
-pip install -r requirements.txt
-```
+### Initialization
 
-You will also need to install dependencies for the lambda runtime. The script `lambda/downloadvendor.sh` will handle this for you automatically. Note that if you change which versions of libraries you are using, you will need to make sure that any installed libraries with compiled binaries (e.g. numpy, pandas) are compatible with a 64-bit linux system. (If you are using the `downloadvendor.sh` script, you can ignore this warning; the versions are correct already.)
-
-To install vendored libraries, run the following (you must run the script from inside the `lambda` directory):
+To create a new motif search job, run the following:
 
 ```shell
-cd lambda
-bash ./downloadvendor.sh
-cd ..
+./grandisocloud.py init \
+    --job-id <job-id> \
+    --queue-url <queue-url> \
+    --host-grand-uri <host-grand-uri>
 ```
 
-Your repository should now look like:
+The three required arguments are:
 
-```
-+ (this repository)/
-|
-+-+ lambda/
-| |
-| +-+ downloadvendor.sh
-| |
-| +-+ main.py
-| |
-| +-+ vendor/
-|   |
-|   +-+ ...
-|   +-+ (python packages)
-|   +-+ ...
-|
-+ (this readme)
-```
+| Argument           | Description                                    | Example                                    |
+| ------------------ | ---------------------------------------------- | ------------------------------------------ |
+| `--job-id`         | A unique identifier for the job.               | `--job-id='my-fun-job'`                    |
+| `--queue-url`      | The python-task-queue URI of the queue to use. | `--queue-url='fq://my-grandiso-queue'`     |
+| `--host-grand-uri` | The location of the Grand Graph.               | `--host-grand-uri='sqlite:///my-graph.db'` |
 
-# Optional: Localstack configuration
+**IMPORTANT:** Note that initialization must have access to the Grand Graph, and will perform a full database table scan in order to populate the queue with initial candidate partial motif matches. This may take a long time for large graphs, and may incur significant costs if your graph has hundreds of millions or billions of edges.
 
-For testing and development purposes, you can use `localstack` to act as a mock for the AWS cloud environment. Note that performance is dramatically slower and there is a severe overhead penalty, so you shold avoid using localstack for production or larger workloads.
+### Attaching a worker to a job
 
-To run localstack, we recommend downloading the latest version from GitHub, and running with `docker-compose`:
+Jobs are completed by attaching one or more workers. A worker can be attached to a job by running the following:
 
 ```shell
-git clone https://github.com/localstack/localstack
-cd localstack
-AWS_PROFILE='localstack' TMPDIR=/private$TMPDIR DEBUG=1 SERVICES=serverless,cloudformation,sqs,events PORT_WEB_UI=8082 docker-compose up
+./grandisocloud.py run \
+    --job-id <job-id> \
+    --queue-url <queue-url>
 ```
 
-If you are using localstack, you should specify all endpoint URLs in the steps below, with the `--endpoint-url` command line argument.
-
-# Usage
-
-You are now ready to begin using this package. All of the following commands can be run with `--dry` or `--dry=true` to prevent them from affecting your AWS account:
-
-```shell
-./gi_manage.py --dry=true --job "Example" provision
-```
-
-## Global Flags
-
-| Flag             | Description                                                                                      |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `--dry`          | If true, the command will not actually run, but will show the commands that would have been run. |
-| `--endpoint-url` | The endpoint URL to use for the AWS API.                                                         |
-
-Start by provisioning your resources:
-
-## Provision resources for the first time
-
-You can choose the batch-size (how many elements are popped from the queue to be run in series in the worker lambda). This should be a small number (perhaps even 1) if the graph is particularly large, to guarantee that the Lambda completes without timing out. If the graph is small, or the motif is very sparse, you can set this to a large number (e.g. 20).
-
-If a batch size is not provided, `gi_manage.py` will default to a batch-size of 1.
-
-```shell
-./gi_manage.py provision --batch_size=10
-```
-
-This will do two things:
-
--   Make sure you have all Lambdas, Queues, and Results-tables provisioned in Lambda, SQS, and DynamoDB
--   Connect your GrandIso lambda to listen for incoming messages to your SQS Queue
-
-## Kick off the job
-
-```shell
-./gi_manage.py kickoff --job MyCoolJob --motif mymotif.motif
-```
-
-## Get the results
-
-Note that you can request results right away, but the job may not be finished yet! (You'll get an incomplete set of results, but they will all be valid mappings.)
-
-Note that this performs a seriaized `DynamoDB#scan` operation, which is costly on a sufficiently large table!
-
-```shell
-./gi_manage.py results --job MyCoolJob --format csv > myresults.csv
-```
-
-Complete reference documentation for the `gi_manage.py` file exists in [docs/reference.md](docs/reference.md).
+Note that you do not need to specify a host URI. (This information is stored in the queue job.)
