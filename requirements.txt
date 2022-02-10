@@ -1,3 +1,4 @@
 grandiso
 numpy
 task-queue
+fire
