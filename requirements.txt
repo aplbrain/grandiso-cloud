@@ -1,0 +1,3 @@
+grandiso
+numpy
+task-queue
