@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 This is a single worker node that can be run against a local or cloud queue.
 
