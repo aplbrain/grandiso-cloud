@@ -4,33 +4,59 @@
 This is a single worker node that can be run against a local or cloud queue.
 
 """
+import json
+import pathlib
+from typing import Any, Callable, Dict
+from functools import partial
 
 from fire import Fire
-from functools import partial
-from taskqueue import queueable, TaskQueue
-
-import networkx as nx
-
 from grand.backends import SQLBackend
 import grand
-
 from grandiso import (
     uniform_node_interestingness,
     get_next_backbone_candidates,
 )
+import networkx as nx
+from taskqueue import queueable, TaskQueue
+
+# Type aliases
+JobID = str
+CandidateMapping = Dict[str, str]
+ResultHandlerFunction = Callable[[JobID, CandidateMapping, Any], Any]
 
 
-MOTIF = nx.DiGraph()
-MOTIF.add_edge("1", "2")
-MOTIF.add_edge("2", "3")
-MOTIF.add_edge("3", "1")
+def append_file_result_handler(
+    job_id: str, candidate_mapping: CandidateMapping, filename: str
+) -> None:
+    """
+    Push the result of a job to the queue.
 
-interestingness = uniform_node_interestingness(MOTIF)
+    Arguments:
+        job_id (str): The job ID to push the result for.
+        candidate_mapping (CandidateMapping): The candidate mapping to push.
+        filename (str): The filename to write the result to.
+
+    Returns:
+        None
+
+    """
+    fname = f"{filename}-{job_id}"
+    # append a single binary byte to the file to indicate that the job is complete.
+    with open(fname, "ab") as f:
+        f.write(b"\x00")
+
+
+RESULT_HANDLER: ResultHandlerFunction = append_file_result_handler
 
 
 @queueable
 def get_next_backbone_candidates_and_enqueue(
-    job_id: str, queue_uri: str, candidate: dict, host_grand_uri: str
+    job_id: str,
+    queue_uri: str,
+    candidate: dict,
+    motif_json: dict,
+    interestingness: dict,
+    host_grand_uri: str,
 ) -> None:
     """
     Perform a single iteration of the algorithm.
@@ -55,16 +81,20 @@ def get_next_backbone_candidates_and_enqueue(
         backend=SQLBackend(db_url=host_grand_uri, directed=True),
         directed=True,
     ).nx
+    motif = nx.readwrite.json_graph.node_link_graph(motif_json)
     q = TaskQueue(queue_uri)
 
     # get the next backbone candidates
     next_candidates = get_next_backbone_candidates(
-        candidate, MOTIF, host, interestingness=interestingness, directed=False
+        candidate,
+        motif,
+        host,
+        interestingness=interestingness,
+        directed=motif.is_directed(),
     )
     for c in next_candidates:
-        if len(c.keys()) == len(MOTIF.nodes()):
-            # TODO: Handle complete records
-            pass
+        if len(c) == len(motif):
+            RESULT_HANDLER(job_id, c, job_id)
         else:
             q.insert(
                 [
@@ -73,13 +103,17 @@ def get_next_backbone_candidates_and_enqueue(
                         job_id,
                         queue_uri,
                         c,
+                        motif_json,
+                        interestingness,
                         host_grand_uri,
                     )
                 ]
             )
 
 
-def initialize(job_id: str, queue_uri: str, host_grand_uri: str) -> None:
+def initialize(
+    job_id: str, queue_uri: str, host_grand_uri: str, motif_json: str
+) -> None:
     """
     Initialize a new GrandIsoCloud job.
 
@@ -93,11 +127,29 @@ def initialize(job_id: str, queue_uri: str, host_grand_uri: str) -> None:
         None
 
     """
-    get_next_backbone_candidates_and_enqueue(job_id, queue_uri, {}, host_grand_uri)
+    resolved_path = pathlib.Path(motif_json).expanduser().resolve()
+    if resolved_path.exists():
+        with open(resolved_path, "r") as f:
+            motif_json = json.load(f)
+    else:
+        try:
+            motif_json = json.loads(motif_json)
+            nx.readwrite.json_graph.node_link_graph(motif_json)
+        except ValueError:
+            raise ValueError(
+                "Could not parse motif JSON. Please ensure that the JSON is valid."
+            )
+
+    motif = nx.readwrite.json_graph.node_link_graph(motif_json)
+
+    interestingness = uniform_node_interestingness(motif)
+
+    get_next_backbone_candidates_and_enqueue(
+        job_id, queue_uri, {}, motif_json, interestingness, host_grand_uri
+    )
 
 
 def run(
-    job_id: str,
     queue_uri: str,
     verbose: bool = False,
     lease_seconds: int = None,
@@ -114,7 +166,6 @@ def run(
     If you have multiple workers, you can use the same queue URI for each.
 
     Arguments:
-        job_id (str): The job ID to run.
         queue_uri (str): The URI of the queue to use. See ptq for more details.
         verbose (bool): Whether to print progress information.
         lease_seconds (int): The number of seconds to wait for a job before

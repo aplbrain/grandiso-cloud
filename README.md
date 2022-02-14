@@ -35,6 +35,12 @@ To create a new motif search job, run the following:
     --host-grand-uri <host-grand-uri>
 ```
 
+Example:
+
+```shell
+./grandisocloud.py init --job-id='1' --queue-uri='fq://demoqueue' --host-grand-uri='sqlite:///host.db' --motif-json='motif.json'
+```
+
 The three required arguments are:
 
 | Argument           | Description                                    | Example                                    |
@@ -51,8 +57,20 @@ Jobs are completed by attaching one or more workers. A worker can be attached to
 
 ```shell
 ./grandisocloud.py run \
-    --job-id <job-id> \
     --queue-url <queue-url>
 ```
 
-Note that you do not need to specify a host URI. (This information is stored in the queue job.)
+Example:
+
+```shell
+./grandisocloud.py run --queue-uri='fq://demoqueue'
+```
+
+Note that you do not need to specify a host URI, motif, or job ID. (This information is stored in the queue job.)
+
+You can also pass optional arguments:
+
+| Argument    | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `--verbose` | Print verbose information about the queue execution. |
+| `--tally`   | Keep a tally of the number of jobs in the queue.     |
